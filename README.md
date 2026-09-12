@@ -7,6 +7,7 @@
 
 ### Team Members
 - Team Lead: Abhinav
+- Member 2: Reuben Skariah
 
 ### Project Description
 An overengineered, military-tactical helmet-mounted computer vision and kinematics engine that detects oncoming high-beam vehicle glare in real time, classifies headlight photometric dispersion, triangulates the oncoming driver's eye position, and directs a retaliatory helmet-mounted photon torch pulse straight into their eyes.
@@ -90,6 +91,7 @@ $HBGCS,PAN:097,TILT:052,LUX:1840,BEAM:HIGH,STRIKE:ACTIVE*3F
 
 ## Team Contributions
 - **Abhinav:** Concept, OpenCV computer vision pipeline, Camera2 exposure clamping, photometric high-beam classifier, driver eye-box kinematics, tactical HUD overlay, and ESP32 telemetry protocol.
+- **Reuben Skariah:** Hardware architecture, helmet chin/top mount assembly, ESP32 pan/tilt servo gimbal wiring, power distribution, and high-lumen photon torch driver integration.
 
 ---
 Made with ❤️ at TinkerHub Useless Projects
