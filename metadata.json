@@ -1,0 +1,7 @@
+{
+  "name": "HighBeam Aim HUD",
+  "description": "Real-time night computer vision & kinematics engine for helmet-mounted vehicle headlight detection and RHD driver targeting.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
+
