@@ -42,7 +42,7 @@ import kotlin.math.roundToInt
  * 2. CameraX 640x480 feed binding with STRATEGY_KEEP_ONLY_LATEST backpressure.
  * 3. Camera2 interop exposure clamping to minimum (-4 EV or lower) to isolate high-beam filaments.
  * 4. DriverTargetAnalyzer integration with photometric high-beam classifier and HUD.
- * 5. Serial NMEA protocol vector generation ($HBGCS,PAN:xxx,BEAM:x,TORCH:ON/OFF*3F) for ESP32.
+ * 5. ESP32 HelmetTracker Wireless REST API integration (http://192.168.4.1/set?angle=X&light=Y).
  */
 class MainActivity : ComponentActivity(),
     DriverTargetAnalyzer.TargetVectorListener,
@@ -63,6 +63,7 @@ class MainActivity : ComponentActivity(),
 
     private lateinit var binding: ActivityMainBinding
     private lateinit var cameraExecutor: ExecutorService
+    private lateinit var esp32Client: Esp32Client
 
     private var camera: Camera? = null
     private var isExposureClamped = true
@@ -92,6 +93,13 @@ class MainActivity : ComponentActivity(),
 
         // Initialize OpenCV native binaries
         initializeOpenCV()
+
+        // Initialize ESP32 Wireless REST Hardware Controller
+        esp32Client = Esp32Client { _, statusText ->
+            runOnUiThread {
+                binding.exposureStatusText.text = statusText
+            }
+        }
 
         cameraExecutor = Executors.newSingleThreadExecutor()
 
@@ -270,15 +278,17 @@ class MainActivity : ComponentActivity(),
     }
 
     /**
-     * Real-time kinematic target vector dispatch interface for ESP32 / WebSocket integration.
+     * Real-time kinematic target vector dispatch interface for ESP32 HelmetTracker REST API.
      */
     override fun onTargetVectorUpdated(pan: Int, tilt: Int, locked: Boolean, countermeasureActive: Boolean) {
         if (locked) {
             val torchStr = if (countermeasureActive) "TORCH: ON" else "TORCH: OFF"
             Log.d(TAG, "TARGET VECTOR -> Pan: $pan° [$torchStr]")
         }
-        // ESP32 Serial / Bluetooth LE NMEA Vector dispatch hook:
-        // esp32Client.send("\$HBGCS,PAN:$pan,TORCH:${if(countermeasureActive) "ON" else "OFF"}\n")
+
+        // Dispatch real-time REST request to ESP32 HelmetTracker SoftAP (192.168.4.1/set?angle=X&light=Y)
+        val targetAngle = if (locked) pan else 90
+        esp32Client.dispatchTargetState(angle = targetAngle, lightOn = countermeasureActive)
     }
 
     /**
