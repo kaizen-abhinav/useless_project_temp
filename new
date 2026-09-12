@@ -1,0 +1,558 @@
+#include <Arduino.h>
+#include <WiFi.h>
+#include <WebServer.h>
+#include <ESP32Servo.h>
+#include "soc/soc.h"
+#include "soc/rtc_cntl_reg.h"
+
+// =====================================================
+// Wi-Fi Access Point Configuration
+// =====================================================
+const char* AP_SSID     = "HelmetTracker";
+const char* AP_PASSWORD = "12345678";
+
+IPAddress local_IP(192, 168, 4, 1);
+IPAddress gateway(192, 168, 4, 1);
+IPAddress subnet(255, 255, 255, 0);
+
+WebServer server(80);
+
+// =====================================================
+// Single Servo Configuration (Horizontal Tracking 0-180°)
+// =====================================================
+const int SERVO_PIN = 18;     // PWM pin for Servo Signal (Orange / Yellow wire)
+Servo trackingServo;
+int currentAngle = 90;        // Initial center position (0-180)
+
+// =====================================================
+// Relay Configuration (Top Light Control)
+// =====================================================
+const int RELAY_PIN = 23;     // Digital pin to Relay IN
+const bool RELAY_ACTIVE_HIGH = true; // Set to true if HIGH=ON, false if Active-LOW (LOW=ON)
+
+bool relayState = false;      // false = OFF, true = ON
+
+void setRelay(bool state) {
+    relayState = state;
+    digitalWrite(RELAY_PIN, (relayState == RELAY_ACTIVE_HIGH) ? HIGH : LOW);
+}
+
+// =====================================================
+// Responsive, Lightweight Mobile Dashboard
+// =====================================================
+const char webpage[] PROGMEM = R"rawliteral(
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Helmet Tracker - Control Center</title>
+    <style>
+        :root {
+            --bg: #0f172a;
+            --card: #1e293b;
+            --text: #f8fafc;
+            --text-dim: #94a3b8;
+            --servo-color: #38bdf8;
+            --light-active: #eab308;
+            --light-inactive: #334155;
+            --green: #22c55e;
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+            -webkit-tap-highlight-color: transparent;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;
+            background: radial-gradient(circle at 50% 10%, #1e293b 0%, var(--bg) 85%);
+            color: var(--text);
+            text-align: center;
+            padding: 16px 14px 40px;
+            min-height: 100vh;
+        }
+
+        .container {
+            width: 100%;
+            max-width: 440px;
+            margin: 0 auto;
+            display: flex;
+            flex-direction: column;
+            gap: 14px;
+        }
+
+        .badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            background: rgba(56, 189, 248, 0.12);
+            border: 1px solid rgba(56, 189, 248, 0.3);
+            color: var(--servo-color);
+            font-size: 12px;
+            font-weight: 700;
+            padding: 4px 12px;
+            border-radius: 9999px;
+            margin-bottom: 6px;
+        }
+
+        .badge-dot {
+            width: 7px;
+            height: 7px;
+            background: var(--green);
+            border-radius: 50%;
+            box-shadow: 0 0 8px var(--green);
+        }
+
+        h1 {
+            font-size: 24px;
+            font-weight: 800;
+        }
+
+        .sub {
+            color: var(--text-dim);
+            font-size: 13px;
+        }
+
+        .card {
+            background: var(--card);
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            border-radius: 16px;
+            padding: 18px;
+            box-shadow: 0 8px 24px rgba(0,0,0,0.35);
+        }
+
+        /* LIGHT RELAY CARD */
+        .relay-card {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            transition: all 0.2s ease;
+        }
+
+        .relay-card.on {
+            background: rgba(234, 179, 8, 0.12);
+            border-color: rgba(234, 179, 8, 0.45);
+            box-shadow: 0 0 20px rgba(234, 179, 8, 0.2);
+        }
+
+        .relay-info {
+            text-align: left;
+        }
+
+        .relay-title {
+            font-size: 16px;
+            font-weight: 700;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .relay-status {
+            font-size: 12px;
+            color: var(--text-dim);
+            margin-top: 2px;
+            font-weight: 600;
+        }
+
+        .relay-status.active {
+            color: var(--light-active);
+        }
+
+        .btn-toggle {
+            padding: 12px 22px;
+            border-radius: 12px;
+            font-size: 14px;
+            font-weight: 800;
+            border: none;
+            cursor: pointer;
+            transition: all 0.15s;
+            background: var(--light-inactive);
+            color: white;
+        }
+
+        .btn-toggle.active {
+            background: var(--light-active);
+            color: #0f172a;
+            box-shadow: 0 0 16px rgba(234, 179, 8, 0.6);
+        }
+
+        /* SERVO CONTROLS */
+        .servo-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 12px;
+        }
+
+        .servo-title {
+            font-size: 15px;
+            font-weight: 700;
+            color: var(--servo-color);
+        }
+
+        .servo-val {
+            font-size: 26px;
+            font-weight: 900;
+            font-variant-numeric: tabular-nums;
+            color: var(--servo-color);
+            background: rgba(15, 23, 42, 0.7);
+            padding: 2px 12px;
+            border-radius: 8px;
+            border: 1px solid rgba(56, 189, 248, 0.3);
+        }
+
+        input[type=range] {
+            width: 100%;
+            height: 12px;
+            border-radius: 6px;
+            background: #0f172a;
+            outline: none;
+            -webkit-appearance: none;
+        }
+
+        input[type=range]::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            width: 32px;
+            height: 32px;
+            border-radius: 50%;
+            background: var(--servo-color);
+            cursor: pointer;
+            box-shadow: 0 0 14px rgba(56, 189, 248, 0.6);
+        }
+
+        .bounds {
+            display: flex;
+            justify-content: space-between;
+            font-size: 11px;
+            color: var(--text-dim);
+            margin-top: 6px;
+        }
+
+        /* PRESETS */
+        .presets {
+            display: flex;
+            gap: 6px;
+            margin-top: 16px;
+        }
+
+        .btn-preset {
+            flex: 1;
+            background: #334155;
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            color: #cbd5e1;
+            font-size: 12px;
+            font-weight: 600;
+            padding: 9px 2px;
+            border-radius: 8px;
+            border: none;
+            cursor: pointer;
+        }
+
+        .btn-preset:active {
+            background: var(--servo-color);
+            color: #0f172a;
+        }
+
+        /* STATUS DISPLAY */
+        .status-box {
+            background: rgba(30, 41, 59, 0.6);
+            border: 1px solid rgba(255, 255, 255, 0.06);
+            border-radius: 12px;
+            padding: 10px;
+            font-size: 13px;
+            color: var(--text-dim);
+        }
+
+        .status-val {
+            font-weight: 700;
+            color: #22c55e;
+            margin-top: 3px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <div class="badge">
+                <span class="badge-dot"></span>
+                <span>ESP32 Connected • 192.168.4.1</span>
+            </div>
+            <h1>HelmetTracker</h1>
+            <p class="sub">Horizontal Tracking Servo (0°–180°) & Light Relay</p>
+        </header>
+
+        <!-- TOP LIGHT RELAY SWITCH -->
+        <div class="card relay-card" id="relayBox">
+            <div class="relay-info">
+                <div class="relay-title">💡 TOP LIGHT</div>
+                <div class="relay-status" id="relayLabel">Relay: OFF</div>
+            </div>
+            <button class="btn-toggle" id="relayBtn" onclick="toggleLight()">
+                TURN ON
+            </button>
+        </div>
+
+        <!-- HORIZONTAL SERVO CONTROLLER -->
+        <div class="card">
+            <div class="servo-header">
+                <span class="servo-title">↔ HORIZONTAL SERVO</span>
+                <span class="servo-val" id="angleVal">90°</span>
+            </div>
+
+            <input type="range" id="angleSlider" min="0" max="180" value="90" oninput="onSliderMove()">
+
+            <div class="bounds">
+                <span>0° (Left)</span>
+                <span>90° (Center)</span>
+                <span>180° (Right)</span>
+            </div>
+
+            <!-- PRESET QUICK BUTTONS -->
+            <div class="presets">
+                <button class="btn-preset" onclick="setAngle(0)">0° Left</button>
+                <button class="btn-preset" onclick="setAngle(45)">45°</button>
+                <button class="btn-preset" onclick="setAngle(90)">90° Center</button>
+                <button class="btn-preset" onclick="setAngle(135)">135°</button>
+                <button class="btn-preset" onclick="setAngle(180)">180° Right</button>
+            </div>
+        </div>
+
+        <!-- STATUS -->
+        <div class="status-box">
+            <div>Live Status:</div>
+            <div class="status-val" id="statusMsg">Connected &amp; Ready</div>
+        </div>
+    </div>
+
+    <script>
+        let lightState = 0; // 0 = OFF, 1 = ON
+        let streamTimer = null;
+        let isSending = false;
+
+        function onSliderMove() {
+            const angle = document.getElementById("angleSlider").value;
+            document.getElementById("angleVal").innerText = angle + "°";
+
+            clearTimeout(streamTimer);
+            streamTimer = setTimeout(() => {
+                sendAngle(angle);
+            }, 50);
+        }
+
+        function setAngle(angle) {
+            document.getElementById("angleSlider").value = angle;
+            document.getElementById("angleVal").innerText = angle + "°";
+            sendAngle(angle);
+        }
+
+        async function sendAngle(angle) {
+            if (isSending) return;
+            isSending = true;
+            try {
+                let res = await fetch(`/set?angle=${angle}`, { cache: 'no-store' });
+                let text = await res.text();
+                document.getElementById("statusMsg").innerText = text;
+            } catch (e) {
+                document.getElementById("statusMsg").innerText = "Connection Error";
+            } finally {
+                isSending = false;
+            }
+        }
+
+        async function toggleLight() {
+            lightState = (lightState === 0) ? 1 : 0;
+            updateLightUI();
+            try {
+                let res = await fetch(`/set?light=${lightState}`, { cache: 'no-store' });
+                let text = await res.text();
+                document.getElementById("statusMsg").innerText = text;
+            } catch (e) {
+                document.getElementById("statusMsg").innerText = "Relay Switch Error";
+            }
+        }
+
+        function updateLightUI() {
+            const box = document.getElementById("relayBox");
+            const label = document.getElementById("relayLabel");
+            const btn = document.getElementById("relayBtn");
+
+            if (lightState === 1) {
+                box.classList.add("on");
+                label.innerText = "Relay: ON (Active)";
+                label.classList.add("active");
+                btn.innerText = "TURN OFF";
+                btn.classList.add("active");
+            } else {
+                box.classList.remove("on");
+                label.innerText = "Relay: OFF";
+                label.classList.remove("active");
+                btn.innerText = "TURN ON";
+                btn.classList.remove("active");
+            }
+        }
+
+        // On Page Load: Sync state
+        window.addEventListener('load', async () => {
+            try {
+                let res = await fetch('/status', { cache: 'no-store' });
+                if (res.ok) {
+                    let data = await res.json();
+                    if (data.angle !== undefined) {
+                        document.getElementById("angleSlider").value = data.angle;
+                        document.getElementById("angleVal").innerText = data.angle + "°";
+                    }
+                    if (data.light !== undefined) {
+                        lightState = data.light;
+                        updateLightUI();
+                    }
+                }
+            } catch (e) {}
+        });
+    </script>
+</body>
+</html>
+)rawliteral";
+
+// =====================================================
+// HTTP Route Handlers
+// =====================================================
+void handleRoot()
+{
+    server.sendHeader("Access-Control-Allow-Origin", "*");
+    server.send(200, "text/html", webpage);
+}
+
+void handleSet()
+{
+    server.sendHeader("Access-Control-Allow-Origin", "*");
+
+    bool hasAngle = server.hasArg("angle") || server.hasArg("pan");
+    bool hasLight = server.hasArg("light");
+
+    if (!hasAngle && !hasLight)
+    {
+        server.send(400, "text/plain", "Missing parameter (angle or light)");
+        return;
+    }
+
+    if (hasAngle) {
+        String valStr = server.hasArg("angle") ? server.arg("angle") : server.arg("pan");
+        currentAngle = constrain(valStr.toInt(), 0, 180);
+        trackingServo.write(currentAngle);
+    }
+
+    if (hasLight) {
+        int val = server.arg("light").toInt();
+        setRelay(val > 0);
+    }
+
+    // Print to Serial Monitor
+    Serial.println();
+    Serial.println("================================");
+    Serial.println("Received command:");
+    Serial.print("HORIZONTAL SERVO = ");
+    Serial.print(currentAngle);
+    Serial.println(" degrees");
+    Serial.print("TOP LIGHT RELAY  = ");
+    Serial.println(relayState ? "ON" : "OFF");
+    Serial.println("================================");
+
+    String response = "SERVO: " + String(currentAngle) + "° | LIGHT: " + (relayState ? "ON" : "OFF");
+    server.send(200, "text/plain", response);
+}
+
+void handleStatus()
+{
+    server.sendHeader("Access-Control-Allow-Origin", "*");
+    String json = "{";
+    json += "\"angle\":" + String(currentAngle) + ",";
+    json += "\"light\":" + String(relayState ? 1 : 0);
+    json += "}";
+    server.send(200, "application/json", json);
+}
+
+// =====================================================
+// Setup
+// =====================================================
+void setup()
+{
+    // 1. Disable brownout detector during high motor inrush current spikes
+    WRITE_PERI_REG(RTC_CNTL_BROWN_OUT_REG, 0);
+
+    Serial.begin(115200);
+    delay(500);
+
+    Serial.println();
+    Serial.println("==========================================");
+    Serial.println("   HelmetTracker - Single Servo & Relay   ");
+    Serial.println("==========================================");
+
+    // 2. Initialize Relay on GPIO 23
+    pinMode(RELAY_PIN, OUTPUT);
+    setRelay(false);
+    Serial.print("[OK] Relay initialized on GPIO ");
+    Serial.print(RELAY_PIN);
+    Serial.println(" (Default: OFF)");
+
+    // 3. Initialize Single Servo on GPIO 18
+    ESP32PWM::allocateTimer(0);
+    ESP32PWM::allocateTimer(1);
+    ESP32PWM::allocateTimer(2);
+    ESP32PWM::allocateTimer(3);
+
+    trackingServo.setPeriodHertz(50);
+    trackingServo.attach(SERVO_PIN, 544, 2400);
+
+    Serial.print("[OK] Servo attached to GPIO ");
+    Serial.print(SERVO_PIN);
+    Serial.println(trackingServo.attached() ? " [SUCCESS]" : " [FAILED]");
+
+    // Set initial position to 90 degrees center
+    trackingServo.write(currentAngle);
+    Serial.println("[OK] Servo initialized to 90 degrees (Center)");
+
+    // 4. Start Wi-Fi Access Point with balanced RF power (17dBm prevents current spikes)
+    WiFi.mode(WIFI_AP);
+    WiFi.softAPConfig(local_IP, gateway, subnet);
+    WiFi.softAP(AP_SSID, AP_PASSWORD);
+    WiFi.setTxPower(WIFI_POWER_17dBm);
+
+    // Event listener for phone connect/disconnect
+    WiFi.onEvent([](WiFiEvent_t event, WiFiEventInfo_t info) {
+        if (event == ARDUINO_EVENT_WIFI_AP_STACONNECTED) {
+            Serial.println("[Wi-Fi] >>> Phone connected to HelmetTracker! <<<");
+        } else if (event == ARDUINO_EVENT_WIFI_AP_STADISCONNECTED) {
+            Serial.println("[Wi-Fi] >>> Phone disconnected! <<<");
+        }
+    });
+
+    Serial.println();
+    Serial.println("[OK] Wi-Fi Access Point is Active");
+    Serial.print("SSID:        ");
+    Serial.println(AP_SSID);
+    Serial.print("IP Address:  ");
+    Serial.println(WiFi.softAPIP());
+
+    // 5. Start HTTP Server
+    server.on("/", handleRoot);
+    server.on("/set", handleSet);
+    server.on("/status", handleStatus);
+    server.begin();
+
+    Serial.println("[OK] Fast HTTP Server listening on port 80");
+    Serial.println("------------------------------------------");
+    Serial.println("Open on your phone: http://192.168.4.1/");
+    Serial.println("Waiting for commands...");
+    Serial.println("==========================================");
+}
+
+// =====================================================
+// Main Loop
+// =====================================================
+void loop()
+{
+    server.handleClient();
+}
