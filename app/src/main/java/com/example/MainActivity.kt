@@ -5,6 +5,8 @@ import android.content.pm.PackageManager
 import android.graphics.Color
 import android.graphics.PointF
 import android.hardware.camera2.CaptureRequest
+import android.media.AudioManager
+import android.media.MediaPlayer
 import android.os.Build
 import android.os.Bundle
 import android.util.Log
@@ -43,6 +45,9 @@ import kotlin.math.roundToInt
  * 3. Camera2 interop exposure clamping to minimum (-4 EV or lower) to isolate high-beam filaments.
  * 4. DriverTargetAnalyzer integration with photometric high-beam classifier and HUD.
  * 5. Serial NMEA protocol vector generation for ESP32 helmet mount torch.
+ * 6. High-Beam Retaliation Audio Engine:
+ *    - Plays `are2.mp3` at MAX volume when high beam is detected.
+ *    - Plays `marathaka.mp3` at MAX volume when the vehicle passes / high beam terminates.
  */
 class MainActivity : ComponentActivity(),
     DriverTargetAnalyzer.TargetVectorListener,
@@ -67,6 +72,10 @@ class MainActivity : ComponentActivity(),
     private var camera: Camera? = null
     private var isExposureClamped = true
     private var simMode = SimMode.OFF
+
+    // Audio Engine State
+    private var mediaPlayer: MediaPlayer? = null
+    private var isHighBeamActive = false
 
     private val cameraPermissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestPermission()
@@ -270,15 +279,46 @@ class MainActivity : ComponentActivity(),
     }
 
     /**
-     * Real-time kinematic target vector dispatch interface for ESP32 / WebSocket integration.
+     * Real-time kinematic target vector dispatch interface for ESP32 / Audio integration.
      */
     override fun onTargetVectorUpdated(pan: Int, tilt: Int, locked: Boolean, countermeasureActive: Boolean) {
         if (locked) {
             val status = if (countermeasureActive) "STRIKE ACTIVE" else "PASSIVE"
             Log.d(TAG, "TARGET VECTOR -> Pan: $pan°, Tilt: $tilt° [$status]")
         }
-        // ESP32 Serial / Bluetooth LE NMEA Vector dispatch hook:
-        // esp32Client.send("\$HBGCS,PAN:$pan,TILT:$tilt,STRIKE:${if(countermeasureActive) 1 else 0}\n")
+
+        // High Beam Audio Engine Trigger Logic
+        val currentHighBeam = countermeasureActive
+        if (currentHighBeam != isHighBeamActive) {
+            isHighBeamActive = currentHighBeam
+            runOnUiThread {
+                if (currentHighBeam) {
+                    // High beam detected -> play are2.mp3 at MAX volume
+                    playAudio(R.raw.are2)
+                } else {
+                    // Vehicle passed / High beam terminated -> play marathaka.mp3 at MAX volume
+                    playAudio(R.raw.marathaka)
+                }
+            }
+        }
+    }
+
+    /**
+     * Plays the specified raw audio resource at MAXIMUM stream volume.
+     */
+    private fun playAudio(resId: Int) {
+        try {
+            val audioManager = getSystemService(AUDIO_SERVICE) as AudioManager
+            val maxVol = audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
+            audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, maxVol, 0)
+
+            mediaPlayer?.stop()
+            mediaPlayer?.release()
+            mediaPlayer = MediaPlayer.create(this, resId)
+            mediaPlayer?.start()
+        } catch (e: Exception) {
+            Log.e(TAG, "Audio playback error", e)
+        }
     }
 
     /**
@@ -367,7 +407,6 @@ class MainActivity : ComponentActivity(),
         // Xdriver = Mx - 0.25*W = 300 - 45 = 255
         val driverTarget = PointF(255f, 107f)
 
-        // Center frame (320, 240) -> normX = (255-320)/320 = -0.2031, normY = (107-240)/240 = -0.554
         val pan = 97
         val tilt = 52
 
@@ -461,6 +500,9 @@ class MainActivity : ComponentActivity(),
 
     override fun onDestroy() {
         super.onDestroy()
+        mediaPlayer?.stop()
+        mediaPlayer?.release()
+        mediaPlayer = null
         cameraExecutor.shutdown()
     }
 }
