@@ -20,7 +20,7 @@ import kotlin.math.min
 import kotlin.math.roundToInt
 
 /**
- * High-Precision OpenCV Computer Vision & Photometric Kinematics Analyzer.
+ * High-Precision OpenCV Computer Vision & Pan-Axis Kinematics Analyzer.
  *
  * Feature Pipeline:
  * 1. Zero-copy Y-plane luminance extraction to 8-bit OpenCV Mat.
@@ -29,8 +29,8 @@ import kotlin.math.roundToInt
  *    - Horizon Margin Exclusion (Rejects top 18% roof lights).
  *    - Compactness & Aspect Ratio Filter (Rejects elongated ceiling tubes and diffuse panel lights).
  * 4. Dual Headlight Pair & Single Flashlight Hot-spot Detection Engine.
- * 5. Multi-Factor Photometric High-Beam Glare Classifier & EMA Servo Aiming.
- * 6. Real-time Retaliatory Photon Countermeasure & NMEA Dispatch for ESP32.
+ * 5. Multi-Factor Photometric High-Beam Glare Classifier & Single-Axis Pan Aiming.
+ * 6. Real-time Retaliatory Photon Torch Control ($HBGCS,PAN:xxx,BEAM:x,TORCH:ON/OFF*3F) for ESP32.
  */
 class DriverTargetAnalyzer(
     private val targetVectorListener: TargetVectorListener? = null,
@@ -62,7 +62,6 @@ class DriverTargetAnalyzer(
         const val DRIVER_LATERAL_OFFSET_FACTOR = 0.25
         const val SERVO_CENTER_DEG = 90
         const val PAN_FOV_HALF_DEG = 34.0
-        const val TILT_FOV_HALF_DEG = 25.0
 
         // Calibration constants
         private const val ASSUMED_HEADLIGHT_SEPARATION_METERS = 1.25 // Standard car width
@@ -89,7 +88,7 @@ class DriverTargetAnalyzer(
         val fps: Double,
         val locked: Boolean,
         val pan: Int,
-        val tilt: Int,
+        val tilt: Int = SERVO_CENTER_DEG,
         val blobCount: Int,
         val headlightLeft: PointF? = null,
         val headlightRight: PointF? = null,
@@ -117,9 +116,8 @@ class DriverTargetAnalyzer(
     // Reusable byte array buffer
     private var yPlaneBuffer: ByteArray? = null
 
-    // Exponential Moving Average (EMA) smoothing for servo stability
+    // Exponential Moving Average (EMA) smoothing for single-axis pan servo stability
     private var smoothedPan = SERVO_CENTER_DEG.toDouble()
-    private var smoothedTilt = SERVO_CENTER_DEG.toDouble()
     private val emaAlpha = 0.30
 
     // FPS tracking
@@ -247,10 +245,10 @@ class DriverTargetAnalyzer(
                 }
             }
 
-            // Step 6: Target Triangulation & Photometric Classifier
+            // Step 6: Single-Axis Pan Target Triangulation & Photometric Classifier
             var isLocked = false
             var panAngle = SERVO_CENTER_DEG
-            var tiltAngle = SERVO_CENTER_DEG
+            val tiltAngle = SERVO_CENTER_DEG // Tilt is locked to level horizon (hardware tilt removed)
             var driverTargetPoint: PointF? = null
             var headlightLeftPoint: PointF? = null
             var headlightRightPoint: PointF? = null
@@ -307,10 +305,10 @@ class DriverTargetAnalyzer(
 
                     if (highBeamConfidence >= HIGH_BEAM_CONFIDENCE_CUTOFF) {
                         beamType = BeamType.HIGH_BEAM
-                        countermeasureActive = true
+                        countermeasureActive = true // Turn ON retaliatory torch
                     } else {
                         beamType = BeamType.LOW_BEAM
-                        countermeasureActive = false
+                        countermeasureActive = false // Turn OFF retaliatory torch
                     }
 
                     upperRoi.release()
@@ -324,26 +322,20 @@ class DriverTargetAnalyzer(
                 driverTargetPoint = PointF(xDriver.toFloat(), yDriver.toFloat())
 
                 val centerX = frameWidth / 2.0
-                val centerY = frameHeight / 2.0
-
                 val normX = (xDriver - centerX) / centerX
-                val normY = (yDriver - centerY) / centerY
 
+                // Single-axis Pan Angle calculation (rotates servo left or right toward driver)
                 val rawPan = (SERVO_CENTER_DEG - (normX * PAN_FOV_HALF_DEG)).coerceIn(0.0, 180.0)
-                val rawTilt = (SERVO_CENTER_DEG + (normY * TILT_FOV_HALF_DEG)).coerceIn(0.0, 180.0)
 
                 smoothedPan = smoothedPan + emaAlpha * (rawPan - smoothedPan)
-                smoothedTilt = smoothedTilt + emaAlpha * (rawTilt - smoothedTilt)
-
                 panAngle = smoothedPan.roundToInt()
-                tiltAngle = smoothedTilt.roundToInt()
 
-                val strikeFlag = if (countermeasureActive) "STRIKE:ACTIVE" else "STRIKE:PASSIVE"
+                val torchState = if (countermeasureActive) "ON" else "OFF"
                 val beamStr = if (beamType == BeamType.HIGH_BEAM) "HIGH" else "LOW"
                 nmeaPacket = String.format(
                     Locale.US,
-                    "\$HBGCS,PAN:%03d,TILT:%03d,LUX:%04d,BEAM:%s,%s*3F",
-                    panAngle, tiltAngle, glareLuxEstimate.roundToInt(), beamStr, strikeFlag
+                    "\$HBGCS,PAN:%03d,BEAM:%s,TORCH:%s*3F",
+                    panAngle, beamStr, torchState
                 )
             } else if (detectedBlobs.isNotEmpty()) {
                 // Single Concentrated Flashlight Target Lock
@@ -359,34 +351,33 @@ class DriverTargetAnalyzer(
                     glareLuxEstimate = (maxBlob.area * 2.8).coerceIn(150.0, 2500.0)
                     highBeamConfidence = 0.92f
                     beamType = BeamType.HIGH_BEAM
-                    countermeasureActive = true
+                    countermeasureActive = true // Turn ON retaliatory torch
 
                     val centerX = frameWidth / 2.0
-                    val centerY = frameHeight / 2.0
-
                     val normX = (maxBlob.x - centerX) / centerX
-                    val normY = (maxBlob.y - centerY) / centerY
 
                     val rawPan = (SERVO_CENTER_DEG - (normX * PAN_FOV_HALF_DEG)).coerceIn(0.0, 180.0)
-                    val rawTilt = (SERVO_CENTER_DEG + (normY * TILT_FOV_HALF_DEG)).coerceIn(0.0, 180.0)
-
                     smoothedPan = smoothedPan + emaAlpha * (rawPan - smoothedPan)
-                    smoothedTilt = smoothedTilt + emaAlpha * (rawTilt - smoothedTilt)
-
                     panAngle = smoothedPan.roundToInt()
-                    tiltAngle = smoothedTilt.roundToInt()
 
                     nmeaPacket = String.format(
                         Locale.US,
-                        "\$HBGCS,PAN:%03d,TILT:%03d,LUX:%04d,BEAM:FLASHLIGHT,STRIKE:ACTIVE*3F",
-                        panAngle, tiltAngle, glareLuxEstimate.roundToInt()
+                        "\$HBGCS,PAN:%03d,BEAM:HIGH,TORCH:ON*3F",
+                        panAngle
                     )
                 }
             } else {
+                // Vehicle passed or target lost: reset pan servo to center (90°) and turn OFF torch
                 smoothedPan = smoothedPan + 0.1 * (SERVO_CENTER_DEG - smoothedPan)
-                smoothedTilt = smoothedTilt + 0.1 * (SERVO_CENTER_DEG - smoothedTilt)
                 panAngle = smoothedPan.roundToInt()
-                tiltAngle = smoothedTilt.roundToInt()
+                countermeasureActive = false
+                beamType = BeamType.NONE
+
+                nmeaPacket = String.format(
+                    Locale.US,
+                    "\$HBGCS,PAN:%03d,BEAM:OFF,TORCH:OFF*3F",
+                    panAngle
+                )
             }
 
             targetVectorListener?.onTargetVectorUpdated(panAngle, tiltAngle, isLocked, countermeasureActive)

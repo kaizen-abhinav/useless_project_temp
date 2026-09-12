@@ -42,7 +42,7 @@ import kotlin.math.roundToInt
  * 2. CameraX 640x480 feed binding with STRATEGY_KEEP_ONLY_LATEST backpressure.
  * 3. Camera2 interop exposure clamping to minimum (-4 EV or lower) to isolate high-beam filaments.
  * 4. DriverTargetAnalyzer integration with photometric high-beam classifier and HUD.
- * 5. Serial NMEA protocol vector generation for ESP32 helmet mount torch.
+ * 5. Serial NMEA protocol vector generation ($HBGCS,PAN:xxx,BEAM:x,TORCH:ON/OFF*3F) for ESP32.
  */
 class MainActivity : ComponentActivity(),
     DriverTargetAnalyzer.TargetVectorListener,
@@ -274,11 +274,11 @@ class MainActivity : ComponentActivity(),
      */
     override fun onTargetVectorUpdated(pan: Int, tilt: Int, locked: Boolean, countermeasureActive: Boolean) {
         if (locked) {
-            val status = if (countermeasureActive) "STRIKE ACTIVE" else "PASSIVE"
-            Log.d(TAG, "TARGET VECTOR -> Pan: $pan°, Tilt: $tilt° [$status]")
+            val torchStr = if (countermeasureActive) "TORCH: ON" else "TORCH: OFF"
+            Log.d(TAG, "TARGET VECTOR -> Pan: $pan° [$torchStr]")
         }
         // ESP32 Serial / Bluetooth LE NMEA Vector dispatch hook:
-        // esp32Client.send("\$HBGCS,PAN:$pan,TILT:$tilt,STRIKE:${if(countermeasureActive) 1 else 0}\n")
+        // esp32Client.send("\$HBGCS,PAN:$pan,TORCH:${if(countermeasureActive) "ON" else "OFF"}\n")
     }
 
     /**
@@ -294,7 +294,7 @@ class MainActivity : ComponentActivity(),
             // Update top status badge
             when {
                 telemetry.countermeasureActive -> {
-                    binding.statusBadgeText.text = "[⚡ RETALIATORY STRIKE ENGAGED ⚡]"
+                    binding.statusBadgeText.text = "[⚡ RETALIATORY TORCH ON ⚡]"
                     binding.statusBadgeText.setTextColor(Color.parseColor("#FF1744"))
                     binding.statusBadgeText.setBackgroundResource(R.drawable.hud_status_badge)
                 }
@@ -327,7 +327,13 @@ class MainActivity : ComponentActivity(),
             }
 
             binding.telemetryPanText.text = "SERVO PAN:  ${telemetry.pan}°"
-            binding.telemetryTiltText.text = "SERVO TILT: ${telemetry.tilt}°"
+            if (telemetry.countermeasureActive) {
+                binding.telemetryTiltText.text = "TORCH: ON 🔥"
+                binding.telemetryTiltText.setTextColor(Color.parseColor("#FF1744"))
+            } else {
+                binding.telemetryTiltText.text = "TORCH: OFF"
+                binding.telemetryTiltText.setTextColor(Color.parseColor("#80D8FF"))
+            }
 
             // Update Right Photometric Classifier Panel
             val beamStr = when (telemetry.beamType) {
@@ -344,10 +350,10 @@ class MainActivity : ComponentActivity(),
             binding.glareLuxText.text = String.format(Locale.US, "GLARE: %d LUX", telemetry.glareLuxEstimate.roundToInt())
 
             if (telemetry.countermeasureActive) {
-                binding.countermeasureStatusText.text = "TORCH STRIKE: ACTIVE 🔥"
+                binding.countermeasureStatusText.text = "TORCH BEAM: ON 🔥"
                 binding.countermeasureStatusText.setTextColor(Color.parseColor("#FF1744"))
             } else {
-                binding.countermeasureStatusText.text = "TORCH STRIKE: OFF"
+                binding.countermeasureStatusText.text = "TORCH BEAM: OFF"
                 binding.countermeasureStatusText.setTextColor(Color.parseColor("#00E676"))
             }
         }
@@ -363,12 +369,10 @@ class MainActivity : ComponentActivity(),
         val simulatedP2 = PointF(390f, 260f)
         val baseline = 180f
 
-        // Kinematics: Ydriver = My - 0.85*W = 260 - 153 = 107
-        // Xdriver = Mx - 0.25*W = 300 - 45 = 255
         val driverTarget = PointF(255f, 107f)
 
         val pan = 97
-        val tilt = 52
+        val tilt = 90 // Level horizon
 
         val beamType = if (isHighBeam) DriverTargetAnalyzer.BeamType.HIGH_BEAM else DriverTargetAnalyzer.BeamType.LOW_BEAM
         val confidence = if (isHighBeam) 0.94f else 0.18f
@@ -376,10 +380,11 @@ class MainActivity : ComponentActivity(),
         val dist = 22.5
         val strikeActive = isHighBeam
 
+        val torchStr = if (strikeActive) "ON" else "OFF"
         val nmeaStr = String.format(
             Locale.US,
-            "\$HBGCS,PAN:%03d,TILT:%03d,LUX:%04d,BEAM:%s,%s*3F",
-            pan, tilt, lux.roundToInt(), if (isHighBeam) "HIGH" else "LOW", if (strikeActive) "STRIKE:ACTIVE" else "STRIKE:PASSIVE"
+            "\$HBGCS,PAN:%03d,BEAM:%s,TORCH:%s*3F",
+            pan, if (isHighBeam) "HIGH" else "LOW", torchStr
         )
 
         val simTelemetry = DriverTargetAnalyzer.TelemetryData(
@@ -407,7 +412,7 @@ class MainActivity : ComponentActivity(),
         binding.hudOverlayView.updateTelemetry(simTelemetry)
 
         if (strikeActive) {
-            binding.statusBadgeText.text = "[⚡ RETALIATORY STRIKE ENGAGED ⚡]"
+            binding.statusBadgeText.text = "[⚡ RETALIATORY TORCH ON ⚡]"
             binding.statusBadgeText.setTextColor(Color.parseColor("#FF1744"))
         } else {
             binding.statusBadgeText.text = "[LOW BEAM - PASSIVE TRACKING]"
@@ -420,7 +425,13 @@ class MainActivity : ComponentActivity(),
         binding.telemetryBlobsText.text = "BLOBS: 2 (SIM)"
         binding.telemetryBaselineText.text = "BASELINE W: 180 px"
         binding.telemetryPanText.text = "SERVO PAN:  $pan°"
-        binding.telemetryTiltText.text = "SERVO TILT: $tilt°"
+        if (strikeActive) {
+            binding.telemetryTiltText.text = "TORCH: ON 🔥"
+            binding.telemetryTiltText.setTextColor(Color.parseColor("#FF1744"))
+        } else {
+            binding.telemetryTiltText.text = "TORCH: OFF"
+            binding.telemetryTiltText.setTextColor(Color.parseColor("#80D8FF"))
+        }
 
         binding.beamTypeText.text = if (isHighBeam) "BEAM: HIGH (94%)" else "BEAM: LOW (18%)"
         binding.beamTypeText.setTextColor(if (isHighBeam) Color.parseColor("#FF1744") else Color.parseColor("#00E676"))
@@ -428,10 +439,10 @@ class MainActivity : ComponentActivity(),
         binding.glareLuxText.text = String.format(Locale.US, "GLARE: %d LUX", lux.roundToInt())
 
         if (strikeActive) {
-            binding.countermeasureStatusText.text = "TORCH STRIKE: ACTIVE 🔥"
+            binding.countermeasureStatusText.text = "TORCH BEAM: ON 🔥"
             binding.countermeasureStatusText.setTextColor(Color.parseColor("#FF1744"))
         } else {
-            binding.countermeasureStatusText.text = "TORCH STRIKE: OFF"
+            binding.countermeasureStatusText.text = "TORCH BEAM: OFF"
             binding.countermeasureStatusText.setTextColor(Color.parseColor("#00E676"))
         }
 

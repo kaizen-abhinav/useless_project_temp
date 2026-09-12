@@ -15,7 +15,7 @@ import java.util.Locale
 import kotlin.math.roundToInt
 
 /**
- * Tactical HUD Overlay with High-Beam Glare Detection & Photon Countermeasure Targeting.
+ * Tactical HUD Overlay with Single-Axis Pan Aiming & High-Beam Photon Torch Control.
  *
  * Visual Features:
  * - Center gimbal horizon and crosshairs
@@ -23,8 +23,8 @@ import kotlin.math.roundToInt
  * - Photometric glare dispersion cones (Red = High Beam, Cyan = Low Beam)
  * - Helmet-Mounted Retaliatory Torch Beam Vector (Fired directly at driver eye-box on High Beam)
  * - High-Beam Countermeasure Warning Banner
- * - NMEA ESP32 Serial Packet Telemetry Output
- * - Dynamic Pan & Tilt angular servo gauges
+ * - NMEA ESP32 Serial Packet Output ($HBGCS,PAN:xxx,BEAM:x,TORCH:ON/OFF*3F)
+ * - Dynamic Single-Axis Pan Servo Gauge (Left/Right Azimuth)
  */
 class HudOverlayView @JvmOverloads constructor(
     context: Context,
@@ -246,9 +246,10 @@ class HudOverlayView @JvmOverloads constructor(
                 val targetStatusStr = if (isHighBeam) "STRIKE TARGET: EYE BOX" else "TARGET: RHD DRIVER"
                 hudTextPaint.color = if (isHighBeam) Color.parseColor("#FF1744") else Color.parseColor("#00E676")
 
+                val torchLabel = if (currentData.countermeasureActive) "TORCH: ON 🔥" else "TORCH: OFF"
                 canvas.drawText(targetStatusStr, driverPt.x + r + 12f, driverPt.y - 10f, hudTextPaint)
                 canvas.drawText(
-                    String.format(Locale.US, "PAN:%d° TILT:%d° DIST:%.1fm", currentData.pan, currentData.tilt, currentData.estimatedDistanceMeters),
+                    String.format(Locale.US, "PAN:%d° %s DIST:%.1fm", currentData.pan, torchLabel, currentData.estimatedDistanceMeters),
                     driverPt.x + r + 12f,
                     driverPt.y + 20f,
                     gridTextPaint
@@ -266,8 +267,8 @@ class HudOverlayView @JvmOverloads constructor(
             canvas.drawText(currentData.nmeaPacket, 16f, viewH - 12f, gridTextPaint)
         }
 
-        // 6. Draw Angular Servo Gauges on borders
-        drawServoGauges(canvas, viewW, viewH, currentData.pan, currentData.tilt, currentData.locked, currentData.countermeasureActive)
+        // 6. Draw Angular Pan Servo Gauge on bottom
+        drawPanServoGauge(canvas, viewW, viewH, currentData.pan, currentData.locked, currentData.countermeasureActive)
     }
 
     private fun drawTacticalGrid(canvas: Canvas, w: Float, h: Float) {
@@ -330,7 +331,7 @@ class HudOverlayView @JvmOverloads constructor(
         canvas.drawRoundRect(rect, 8f, 8f, alertBorderPaint)
 
         val confidencePct = (data.highBeamConfidence * 100).roundToInt()
-        val alertText = String.format(Locale.US, "⚡ HIGH BEAM DETECTED [%d%%] - RETALIATORY TORCH ACTIVE ⚡", confidencePct)
+        val alertText = String.format(Locale.US, "⚡ HIGH BEAM DETECTED [%d%%] - RETALIATORY TORCH ON ⚡", confidencePct)
         val textWidth = alertTextPaint.measureText(alertText)
         val textX = bannerLeft + (bannerW - textWidth) / 2f
         val textY = bannerTop + 33f
@@ -359,10 +360,10 @@ class HudOverlayView @JvmOverloads constructor(
         canvas.drawLine(x + half, y + half, x + half, y + half - arm, paint)
     }
 
-    private fun drawServoGauges(canvas: Canvas, w: Float, h: Float, pan: Int, tilt: Int, locked: Boolean, countermeasure: Boolean) {
-        // Bottom Pan Gauge
-        val gaugeH = 14f
-        val gaugeW = 260f
+    private fun drawPanServoGauge(canvas: Canvas, w: Float, h: Float, pan: Int, locked: Boolean, countermeasure: Boolean) {
+        // Bottom Pan Servo Track (Left 0° <---> 90° Center <---> 180° Right)
+        val gaugeH = 16f
+        val gaugeW = 320f
         val gaugeLeft = (w - gaugeW) / 2f
         val gaugeTop = h - 50f
 
@@ -380,26 +381,9 @@ class HudOverlayView @JvmOverloads constructor(
             locked -> Color.parseColor("#00E676")
             else -> Color.parseColor("#00E5FF")
         }
-        canvas.drawCircle(markerX, gaugeTop + (gaugeH / 2f), 8f, gaugeActivePaint)
+        canvas.drawCircle(markerX, gaugeTop + (gaugeH / 2f), 10f, gaugeActivePaint)
 
-        canvas.drawText("PAN: $pan°", gaugeLeft, gaugeTop - 8f, gridTextPaint)
-
-        // Right Tilt Gauge
-        val tGaugeW = 14f
-        val tGaugeH = 200f
-        val tGaugeLeft = w - 40f
-        val tGaugeTop = (h - tGaugeH) / 2f
-
-        canvas.drawRoundRect(tGaugeLeft, tGaugeTop, tGaugeLeft + tGaugeW, tGaugeTop + tGaugeH, 6f, 6f, gaugePaint)
-        canvas.drawRoundRect(tGaugeLeft, tGaugeTop, tGaugeLeft + tGaugeW, tGaugeTop + tGaugeH, 6f, 6f, gaugeBorderPaint)
-
-        val centerIndicatorY = tGaugeTop + (tGaugeH / 2f)
-        canvas.drawLine(tGaugeLeft - 4f, centerIndicatorY, tGaugeLeft + tGaugeW + 4f, centerIndicatorY, gridTextPaint)
-
-        val tiltRatio = (tilt.coerceIn(0, 180)) / 180f
-        val markerY = tGaugeTop + tiltRatio * tGaugeH
-        canvas.drawCircle(tGaugeLeft + (tGaugeW / 2f), markerY, 8f, gaugeActivePaint)
-
-        canvas.drawText("TILT: $tilt°", tGaugeLeft - 100f, tGaugeTop - 8f, gridTextPaint)
+        val torchText = if (countermeasure) "TORCH: ON 🔥" else "TORCH: OFF"
+        canvas.drawText("PAN SERVO: $pan° | $torchText", gaugeLeft, gaugeTop - 10f, gridTextPaint)
     }
 }

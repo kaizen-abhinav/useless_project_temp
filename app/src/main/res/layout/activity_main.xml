@@ -140,8 +140,8 @@
                 android:layout_height="wrap_content"
                 android:layout_marginTop="2dp"
                 android:fontFamily="monospace"
-                android:text="SERVO TILT: 90°"
-                android:textColor="#00E676"
+                android:text="GIMBAL: PAN-ONLY"
+                android:textColor="#80D8FF"
                 android:textSize="12sp"
                 android:textStyle="bold" />
         </LinearLayout>
@@ -196,7 +196,7 @@
                 android:layout_height="wrap_content"
                 android:layout_marginTop="2dp"
                 android:fontFamily="monospace"
-                android:text="TORCH STRIKE: OFF"
+                android:text="TORCH BEAM: OFF"
                 android:textColor="#00E676"
                 android:textSize="12sp"
                 android:textStyle="bold" />
