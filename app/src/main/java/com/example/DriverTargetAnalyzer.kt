@@ -20,18 +20,17 @@ import kotlin.math.min
 import kotlin.math.roundToInt
 
 /**
- * High-Speed OpenCV Computer Vision & Photometric Kinematics Analyzer.
+ * High-Precision OpenCV Computer Vision & Photometric Kinematics Analyzer.
  *
  * Feature Pipeline:
  * 1. Zero-copy Y-plane luminance extraction to 8-bit OpenCV Mat.
- * 2. Adaptive filament thresholding & morphological blob extraction.
- * 3. Spatial geometry pair-matching for oncoming automotive headlight clusters.
- * 4. Multi-Factor Photometric High-Beam vs Low-Beam Glare Classification Engine:
- *    - Upper-hemisphere vertical dispersion ratio (cut-off shield detection).
- *    - Core luminance flux & inverse-square law Lux estimation.
- *    - Spectral & spatial brightness distribution profiling.
- * 5. Kinematic Driver Eye-Box Triangulation & Exponential Smooth Servo Aiming.
- * 6. Real-time Retaliatory Photon Countermeasure Dispatch for ESP32 Helmet Mount.
+ * 2. High-Threshold Filament & LED Core Isolator (BRIGHTNESS_THRESHOLD = 238).
+ * 3. Overhead Ceiling & Room Light Rejection Filters:
+ *    - Horizon Margin Exclusion (Rejects top 18% roof lights).
+ *    - Compactness & Aspect Ratio Filter (Rejects elongated ceiling tubes and diffuse panel lights).
+ * 4. Dual Headlight Pair & Single Flashlight Hot-spot Detection Engine.
+ * 5. Multi-Factor Photometric High-Beam Glare Classifier & EMA Servo Aiming.
+ * 6. Real-time Retaliatory Photon Countermeasure & NMEA Dispatch for ESP32.
  */
 class DriverTargetAnalyzer(
     private val targetVectorListener: TargetVectorListener? = null,
@@ -46,9 +45,16 @@ class DriverTargetAnalyzer(
 
     companion object {
         private const val TAG = "DriverTargetAnalyzer"
+
+        // Tuned photometric thresholding for headlights and concentrated flashlights
+        const val BRIGHTNESS_THRESHOLD = 238.0 // Requires high pixel saturation (filament/LED core)
         const val MIN_CONTOUR_AREA = 25.0
-        const val MAX_CONTOUR_AREA = 20000.0
-        const val BRIGHTNESS_THRESHOLD = 210.0
+        const val MAX_CONTOUR_AREA = 5000.0 // Rejects large ambient light fixtures
+        const val MIN_ASPECT_RATIO = 0.35 // Rejects extreme horizontal/vertical ceiling panels
+        const val MAX_ASPECT_RATIO = 2.5
+        const val MIN_EXTENT = 0.35 // Solid area ratio (filters diffuse/hollow light reflections)
+        const val TOP_CEILING_MARGIN_RATIO = 0.18 // Rejects roof lights in top 18% of camera frame
+
         const val MIN_HORIZONTAL_SEPARATION = 35.0
         const val MAX_VERTICAL_ALIGNMENT_RATIO = 0.28
         const val MAX_AREA_SYMMETRY_RATIO = 3.0
@@ -58,9 +64,9 @@ class DriverTargetAnalyzer(
         const val PAN_FOV_HALF_DEG = 34.0
         const val TILT_FOV_HALF_DEG = 25.0
 
-        // Real-world calibration constants for distance and lux calculation
+        // Calibration constants
         private const val ASSUMED_HEADLIGHT_SEPARATION_METERS = 1.25 // Standard car width
-        private const val FOCAL_LENGTH_PX = 580.0 // Approximate focal length for 640x480 lens
+        private const val FOCAL_LENGTH_PX = 580.0
         private const val HIGH_BEAM_DISPERSION_THRESHOLD = 0.28
         private const val HIGH_BEAM_CONFIDENCE_CUTOFF = 0.60f
     }
@@ -108,15 +114,15 @@ class DriverTargetAnalyzer(
         val boundingRect: Rect
     )
 
-    // Reusable byte array buffer to prevent heap allocations on every frame
+    // Reusable byte array buffer
     private var yPlaneBuffer: ByteArray? = null
 
     // Exponential Moving Average (EMA) smoothing for servo stability
     private var smoothedPan = SERVO_CENTER_DEG.toDouble()
     private var smoothedTilt = SERVO_CENTER_DEG.toDouble()
-    private val emaAlpha = 0.30 // Smoothing factor (0.0 to 1.0)
+    private val emaAlpha = 0.30
 
-    // FPS calculation tracking
+    // FPS tracking
     private var frameCount = 0
     private var lastFpsCalculationTime = SystemClock.elapsedRealtime()
     private var currentFps = 0.0
@@ -132,13 +138,12 @@ class DriverTargetAnalyzer(
             val imgHeight = imageProxy.height
             val remaining = buffer.remaining()
 
-            // Allocate or reuse direct byte array
             if (yPlaneBuffer == null || yPlaneBuffer!!.size != remaining) {
                 yPlaneBuffer = ByteArray(remaining)
             }
             buffer.get(yPlaneBuffer!!)
 
-            // Zero-copy extraction of Plane 0 (Y-luminance) into OpenCV Mat
+            // Zero-copy Y-plane extraction
             val rawMat = Mat(imgHeight, rowStride, CvType.CV_8UC1)
             rawMat.put(0, 0, yPlaneBuffer)
 
@@ -148,7 +153,6 @@ class DriverTargetAnalyzer(
                 rawMat.submat(0, imgHeight, 0, imgWidth)
             }
 
-            // Correct orientation according to camera sensor rotation
             val rotationDegrees = imageProxy.imageInfo.rotationDegrees
             val orientedMat = Mat()
             when (rotationDegrees) {
@@ -161,11 +165,11 @@ class DriverTargetAnalyzer(
             val frameWidth = orientedMat.cols()
             val frameHeight = orientedMat.rows()
 
-            // Step 1: Binary thresholding to isolate bright light cores
+            // Step 1: High-Threshold Binary Isolator (> 238)
             val threshMat = Mat()
             Imgproc.threshold(orientedMat, threshMat, BRIGHTNESS_THRESHOLD, 255.0, Imgproc.THRESH_BINARY)
 
-            // Step 2: Morphological dilation to bridge fragmented filament reflection cores
+            // Step 2: Dilation to bridge LED filament clusters
             val kernel = Imgproc.getStructuringElement(Imgproc.MORPH_RECT, Size(3.0, 3.0))
             Imgproc.dilate(threshMat, threshMat, kernel)
 
@@ -174,7 +178,7 @@ class DriverTargetAnalyzer(
             val hierarchy = Mat()
             Imgproc.findContours(threshMat, contours, hierarchy, Imgproc.RETR_EXTERNAL, Imgproc.CHAIN_APPROX_SIMPLE)
 
-            // Step 4: Centroid & Bounding Box extraction
+            // Step 4: Centroid, Shape & Ceiling Filter
             val detectedBlobs = ArrayList<LightBlob>()
             val allBlobPoints = ArrayList<PointF>()
 
@@ -185,9 +189,22 @@ class DriverTargetAnalyzer(
                     val cx = moments.m10 / moments.m00
                     val cy = moments.m01 / moments.m00
                     if (!cx.isNaN() && !cy.isNaN()) {
+
+                        // Filter 1: Ceiling Roof Light Exclusion (Ignores lights in top 18% of frame)
+                        if (cy < frameHeight * TOP_CEILING_MARGIN_RATIO) {
+                            contour.release()
+                            continue
+                        }
+
                         val rect = Imgproc.boundingRect(contour)
-                        detectedBlobs.add(LightBlob(cx, cy, area, rect))
-                        allBlobPoints.add(PointF(cx.toFloat(), cy.toFloat()))
+                        val aspect = rect.width.toDouble() / max(1.0, rect.height.toDouble())
+                        val extent = area / (rect.width.toDouble() * rect.height.toDouble())
+
+                        // Filter 2: Compactness & Aspect Ratio (Rejects elongated ceiling tubes/diffuse panels)
+                        if (aspect in MIN_ASPECT_RATIO..MAX_ASPECT_RATIO && extent >= MIN_EXTENT) {
+                            detectedBlobs.add(LightBlob(cx, cy, area, rect))
+                            allBlobPoints.add(PointF(cx.toFloat(), cy.toFloat()))
+                        }
                     }
                 }
                 contour.release()
@@ -230,7 +247,7 @@ class DriverTargetAnalyzer(
                 }
             }
 
-            // Step 6: Multi-Factor Photometric High-Beam / Low-Beam Classification Engine
+            // Step 6: Target Triangulation & Photometric Classifier
             var isLocked = false
             var panAngle = SERVO_CENTER_DEG
             var tiltAngle = SERVO_CENTER_DEG
@@ -246,6 +263,7 @@ class DriverTargetAnalyzer(
             var nmeaPacket = ""
 
             if (bestLeft != null && bestRight != null) {
+                // Dual Headlight Vehicle Pair Matched
                 isLocked = true
                 headlightLeftPoint = PointF(bestLeft.x.toFloat(), bestLeft.y.toFloat())
                 headlightRightPoint = PointF(bestRight.x.toFloat(), bestRight.y.toFloat())
@@ -255,14 +273,11 @@ class DriverTargetAnalyzer(
                 val baselineW = hypot(dx, dy)
                 baselineWidthFloat = baselineW.toFloat()
 
-                // Pinpoint Midpoint
                 val mx = (bestLeft.x + bestRight.x) / 2.0
                 val my = (bestLeft.y + bestRight.y) / 2.0
 
-                // Estimate vehicle distance in meters using optical pinhole model: d = (f * W_real) / W_px
                 estimatedDistanceMeters = (FOCAL_LENGTH_PX * ASSUMED_HEADLIGHT_SEPARATION_METERS) / baselineW
 
-                // Photometric Analysis: Extract ROI around headlight pair for glare dispersion profiling
                 val roiX = max(0, min(bestLeft.boundingRect.x, bestRight.boundingRect.x) - 10)
                 val roiY = max(0, min(bestLeft.boundingRect.y, bestRight.boundingRect.y) - 15)
                 val roiW = min(frameWidth - roiX, max(bestLeft.boundingRect.x + bestLeft.boundingRect.width, bestRight.boundingRect.x + bestRight.boundingRect.width) - roiX + 10)
@@ -271,7 +286,6 @@ class DriverTargetAnalyzer(
                 if (roiW > 0 && roiH > 0) {
                     val roiMat = Mat(orientedMat, Rect(roiX, roiY, roiW, roiH))
 
-                    // Compute vertical dispersion ratio above the horizontal beam center line
                     val halfRoiH = roiH / 2
                     val upperRoi = Mat(roiMat, Rect(0, 0, roiW, halfRoiH))
                     val lowerRoi = Mat(roiMat, Rect(0, halfRoiH, roiW, roiH - halfRoiH))
@@ -281,14 +295,10 @@ class DriverTargetAnalyzer(
                     val totalSum = upperSum + lowerSum
 
                     val dispersionRatio = if (totalSum > 0.0) upperSum / totalSum else 0.0
-
-                    // Mean luminance calculation
                     val meanLuminance = Core.mean(roiMat).`val`[0]
 
-                    // Inverse-square law Lux estimation: Lux = k * (MeanLuminance * Area) / (Distance^2)
                     glareLuxEstimate = ((meanLuminance * (bestLeft.area + bestRight.area)) / max(1.0, estimatedDistanceMeters * estimatedDistanceMeters)) * 1.55
 
-                    // High Beam Confidence Scoring Function
                     val luminanceScore = (meanLuminance / 255.0).coerceIn(0.0, 1.0)
                     val dispersionScore = (dispersionRatio / HIGH_BEAM_DISPERSION_THRESHOLD).coerceIn(0.0, 1.0)
                     val areaScore = ((bestLeft.area + bestRight.area) / 1000.0).coerceIn(0.0, 1.0)
@@ -308,36 +318,26 @@ class DriverTargetAnalyzer(
                     roiMat.release()
                 }
 
-                // Driver Eye Box Triangulation:
-                // Windshield / Driver Head Height: Ydriver = My - (0.85 * W)
                 val yDriver = my - (DRIVER_HEIGHT_FACTOR * baselineW)
-
-                // RHD Driver Seat Lateral Offset: Xdriver = Mx - (0.25 * W)
                 val xDriver = mx - (DRIVER_LATERAL_OFFSET_FACTOR * baselineW)
 
                 driverTargetPoint = PointF(xDriver.toFloat(), yDriver.toFloat())
 
-                // Normalize target coordinates relative to frame center
                 val centerX = frameWidth / 2.0
                 val centerY = frameHeight / 2.0
 
                 val normX = (xDriver - centerX) / centerX
                 val normY = (yDriver - centerY) / centerY
 
-                // Target Pan Angle: 90 - (normX * 34)
                 val rawPan = (SERVO_CENTER_DEG - (normX * PAN_FOV_HALF_DEG)).coerceIn(0.0, 180.0)
-
-                // Target Tilt Angle: 90 + (normY * 25)
                 val rawTilt = (SERVO_CENTER_DEG + (normY * TILT_FOV_HALF_DEG)).coerceIn(0.0, 180.0)
 
-                // Apply Exponential Moving Average (EMA) smoothing
                 smoothedPan = smoothedPan + emaAlpha * (rawPan - smoothedPan)
                 smoothedTilt = smoothedTilt + emaAlpha * (rawTilt - smoothedTilt)
 
                 panAngle = smoothedPan.roundToInt()
                 tiltAngle = smoothedTilt.roundToInt()
 
-                // Construct NMEA-style telemetry command packet for ESP32 serial dispatch
                 val strikeFlag = if (countermeasureActive) "STRIKE:ACTIVE" else "STRIKE:PASSIVE"
                 val beamStr = if (beamType == BeamType.HIGH_BEAM) "HIGH" else "LOW"
                 nmeaPacket = String.format(
@@ -345,18 +345,52 @@ class DriverTargetAnalyzer(
                     "\$HBGCS,PAN:%03d,TILT:%03d,LUX:%04d,BEAM:%s,%s*3F",
                     panAngle, tiltAngle, glareLuxEstimate.roundToInt(), beamStr, strikeFlag
                 )
+            } else if (detectedBlobs.isNotEmpty()) {
+                // Single Concentrated Flashlight Target Lock
+                val maxBlob = detectedBlobs.maxByOrNull { it.area }
+                if (maxBlob != null && maxBlob.area >= 30.0) {
+                    isLocked = true
+                    headlightLeftPoint = PointF(maxBlob.x.toFloat(), maxBlob.y.toFloat())
+                    headlightRightPoint = PointF(maxBlob.x.toFloat(), maxBlob.y.toFloat())
+                    baselineWidthFloat = maxBlob.boundingRect.width.toFloat()
+
+                    driverTargetPoint = PointF(maxBlob.x.toFloat(), maxBlob.y.toFloat())
+
+                    glareLuxEstimate = (maxBlob.area * 2.8).coerceIn(150.0, 2500.0)
+                    highBeamConfidence = 0.92f
+                    beamType = BeamType.HIGH_BEAM
+                    countermeasureActive = true
+
+                    val centerX = frameWidth / 2.0
+                    val centerY = frameHeight / 2.0
+
+                    val normX = (maxBlob.x - centerX) / centerX
+                    val normY = (maxBlob.y - centerY) / centerY
+
+                    val rawPan = (SERVO_CENTER_DEG - (normX * PAN_FOV_HALF_DEG)).coerceIn(0.0, 180.0)
+                    val rawTilt = (SERVO_CENTER_DEG + (normY * TILT_FOV_HALF_DEG)).coerceIn(0.0, 180.0)
+
+                    smoothedPan = smoothedPan + emaAlpha * (rawPan - smoothedPan)
+                    smoothedTilt = smoothedTilt + emaAlpha * (rawTilt - smoothedTilt)
+
+                    panAngle = smoothedPan.roundToInt()
+                    tiltAngle = smoothedTilt.roundToInt()
+
+                    nmeaPacket = String.format(
+                        Locale.US,
+                        "\$HBGCS,PAN:%03d,TILT:%03d,LUX:%04d,BEAM:FLASHLIGHT,STRIKE:ACTIVE*3F",
+                        panAngle, tiltAngle, glareLuxEstimate.roundToInt()
+                    )
+                }
             } else {
-                // Reset EMA smoothing toward center when target is lost
                 smoothedPan = smoothedPan + 0.1 * (SERVO_CENTER_DEG - smoothedPan)
                 smoothedTilt = smoothedTilt + 0.1 * (SERVO_CENTER_DEG - smoothedTilt)
                 panAngle = smoothedPan.roundToInt()
                 tiltAngle = smoothedTilt.roundToInt()
             }
 
-            // Dispatch target vector to listener
             targetVectorListener?.onTargetVectorUpdated(panAngle, tiltAngle, isLocked, countermeasureActive)
 
-            // Compute FPS
             frameCount++
             val now = SystemClock.elapsedRealtime()
             val timeDiff = now - lastFpsCalculationTime
@@ -368,7 +402,6 @@ class DriverTargetAnalyzer(
 
             val latency = SystemClock.elapsedRealtime() - startTime
 
-            // Dispatch telemetry update for HUD overlay
             telemetryListener?.onTelemetryUpdated(
                 TelemetryData(
                     fps = currentFps,
@@ -393,7 +426,6 @@ class DriverTargetAnalyzer(
                 )
             )
 
-            // Memory cleanup: release native Mats
             kernel.release()
             hierarchy.release()
             threshMat.release()
