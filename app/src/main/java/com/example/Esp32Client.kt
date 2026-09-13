@@ -4,7 +4,6 @@ import android.util.Log
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import okhttp3.Call
 import okhttp3.Callback
@@ -21,10 +20,10 @@ import java.util.concurrent.atomic.AtomicBoolean
  *
  * Implements Layer 3 REST Protocol Specification:
  * - Target Endpoint: http://192.168.4.1/set?angle=X&light=Y
- * - Active-LOW Relay Switching Logic:
- *     - lightOn == true  => light = 0 (Energizes active-LOW optocoupled relay -> Torch ON 🔥)
- *     - lightOn == false => light = 1 (De-energizes active-LOW optocoupled relay -> Torch OFF)
- * - 15ms Low-Latency Debounce & HTTP Connection Pooling for instant 60 FPS servo tracking.
+ * - Query Parameters:
+ *     - angle: [0-180] Clamped Pan Servo Angle
+ *     - light: [0|1] (1 = High Beam Torch ON, 0 = Torch OFF)
+ * - Zero-latency non-blocking dispatch & Connection Pooling for instant 60 FPS servo tracking.
  */
 class Esp32Client(
     private val hostIp: String = "192.168.4.1",
@@ -34,40 +33,32 @@ class Esp32Client(
 
     companion object {
         private const val TAG = "Esp32Client"
-        private const val DEBOUNCE_MS = 15L // 15ms ultra-low latency for 60 FPS tracking
     }
 
     private val client = OkHttpClient.Builder()
         .connectionPool(ConnectionPool(5, 5, TimeUnit.MINUTES)) // HTTP Keep-Alive socket reuse
-        .connectTimeout(400, TimeUnit.MILLISECONDS)
-        .readTimeout(400, TimeUnit.MILLISECONDS)
-        .writeTimeout(400, TimeUnit.MILLISECONDS)
+        .connectTimeout(300, TimeUnit.MILLISECONDS)
+        .readTimeout(300, TimeUnit.MILLISECONDS)
+        .writeTimeout(300, TimeUnit.MILLISECONDS)
         .build()
 
     private val scope = CoroutineScope(Dispatchers.IO + Job())
-    private var debounceJob: Job? = null
     private val isBusy = AtomicBoolean(false)
 
     private var lastDispatchedAngle = -1
     private var lastDispatchedLight = -1
 
     /**
-     * Dispatches angle [0-180] and active-LOW light state (0 = ON, 1 = OFF) to ESP32 /set REST endpoint.
+     * Dispatches angle [0-180] and light state (1 = ON, 0 = OFF) to ESP32 /set REST endpoint.
      */
     fun dispatchTargetState(angle: Int, lightOn: Boolean) {
         val clampedAngle = angle.coerceIn(0, 180)
-
-        // Inverted Active-LOW Relay Control Logic:
-        // Active-LOW Optocoupler Relay: 0 = Torch ON, 1 = Torch OFF
-        val lightVal = if (lightOn) 0 else 1
+        val lightVal = if (lightOn) 1 else 0
 
         // Skip duplicate state dispatches
         if (clampedAngle == lastDispatchedAngle && lightVal == lastDispatchedLight) return
 
-        debounceJob?.cancel()
-        debounceJob = scope.launch {
-            delay(DEBOUNCE_MS)
-
+        scope.launch {
             // Non-blocking execution lock to discard intermediary states if HTTP request is in-flight
             if (isBusy.compareAndSet(false, true)) {
                 lastDispatchedAngle = clampedAngle

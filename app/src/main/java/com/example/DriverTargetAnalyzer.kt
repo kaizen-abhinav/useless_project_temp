@@ -20,17 +20,14 @@ import kotlin.math.min
 import kotlin.math.roundToInt
 
 /**
- * High-Precision OpenCV Computer Vision & Pan-Axis Kinematics Analyzer.
+ * High-Speed OpenCV Computer Vision & Pan-Axis Kinematics Analyzer.
  *
  * Feature Pipeline:
  * 1. Zero-copy Y-plane luminance extraction to 8-bit OpenCV Mat.
- * 2. High-Threshold Filament & LED Core Isolator (BRIGHTNESS_THRESHOLD = 238).
- * 3. Overhead Ceiling & Room Light Rejection Filters:
- *    - Horizon Margin Exclusion (Rejects top 18% roof lights).
- *    - Compactness & Aspect Ratio Filter (Rejects elongated ceiling tubes and diffuse panel lights).
- * 4. Dual Headlight Pair & Single Flashlight Hot-spot Detection Engine.
- * 5. Multi-Factor Photometric High-Beam Glare Classifier & Single-Axis Pan Aiming.
- * 6. Real-time Retaliatory Photon Torch Control ($HBGCS,PAN:xxx,BEAM:x,TORCH:ON/OFF*3F) for ESP32.
+ * 2. Reliable Filament & LED Core Thresholding (BRIGHTNESS_THRESHOLD = 210).
+ * 3. Dual Automotive Headlight Pair & Single Flashlight Hot-spot Detection Engine.
+ * 4. Multi-Factor Photometric High-Beam Glare Classifier & Single-Axis Pan Aiming.
+ * 5. Real-time Retaliatory Photon Torch Control for ESP32.
  */
 class DriverTargetAnalyzer(
     private val targetVectorListener: TargetVectorListener? = null,
@@ -46,14 +43,10 @@ class DriverTargetAnalyzer(
     companion object {
         private const val TAG = "DriverTargetAnalyzer"
 
-        // Tuned photometric thresholding for headlights and concentrated flashlights
-        const val BRIGHTNESS_THRESHOLD = 238.0 // Requires high pixel saturation (filament/LED core)
-        const val MIN_CONTOUR_AREA = 25.0
-        const val MAX_CONTOUR_AREA = 5000.0 // Rejects large ambient light fixtures
-        const val MIN_ASPECT_RATIO = 0.35 // Rejects extreme horizontal/vertical ceiling panels
-        const val MAX_ASPECT_RATIO = 2.5
-        const val MIN_EXTENT = 0.35 // Solid area ratio (filters diffuse/hollow light reflections)
-        const val TOP_CEILING_MARGIN_RATIO = 0.18 // Rejects roof lights in top 18% of camera frame
+        // Reliable photometric thresholding for headlights and concentrated flashlights
+        const val BRIGHTNESS_THRESHOLD = 210.0 // Isolate bright light sources
+        const val MIN_CONTOUR_AREA = 15.0
+        const val MAX_CONTOUR_AREA = 25000.0
 
         const val MIN_HORIZONTAL_SEPARATION = 35.0
         const val MAX_VERTICAL_ALIGNMENT_RATIO = 0.28
@@ -67,7 +60,7 @@ class DriverTargetAnalyzer(
         private const val ASSUMED_HEADLIGHT_SEPARATION_METERS = 1.25 // Standard car width
         private const val FOCAL_LENGTH_PX = 580.0
         private const val HIGH_BEAM_DISPERSION_THRESHOLD = 0.28
-        private const val HIGH_BEAM_CONFIDENCE_CUTOFF = 0.60f
+        private const val HIGH_BEAM_CONFIDENCE_CUTOFF = 0.55f
     }
 
     /**
@@ -118,7 +111,7 @@ class DriverTargetAnalyzer(
 
     // Exponential Moving Average (EMA) smoothing for single-axis pan servo stability
     private var smoothedPan = SERVO_CENTER_DEG.toDouble()
-    private val emaAlpha = 0.65 // Ultra-fast 60 FPS responsive tracking
+    private val emaAlpha = 0.50
 
     // FPS tracking
     private var frameCount = 0
@@ -163,7 +156,7 @@ class DriverTargetAnalyzer(
             val frameWidth = orientedMat.cols()
             val frameHeight = orientedMat.rows()
 
-            // Step 1: High-Threshold Binary Isolator (> 238)
+            // Step 1: Binary Thresholding (> 210)
             val threshMat = Mat()
             Imgproc.threshold(orientedMat, threshMat, BRIGHTNESS_THRESHOLD, 255.0, Imgproc.THRESH_BINARY)
 
@@ -176,7 +169,7 @@ class DriverTargetAnalyzer(
             val hierarchy = Mat()
             Imgproc.findContours(threshMat, contours, hierarchy, Imgproc.RETR_EXTERNAL, Imgproc.CHAIN_APPROX_SIMPLE)
 
-            // Step 4: Centroid, Shape & Ceiling Filter
+            // Step 4: Centroid Extraction
             val detectedBlobs = ArrayList<LightBlob>()
             val allBlobPoints = ArrayList<PointF>()
 
@@ -187,22 +180,9 @@ class DriverTargetAnalyzer(
                     val cx = moments.m10 / moments.m00
                     val cy = moments.m01 / moments.m00
                     if (!cx.isNaN() && !cy.isNaN()) {
-
-                        // Filter 1: Ceiling Roof Light Exclusion (Ignores lights in top 18% of frame)
-                        if (cy < frameHeight * TOP_CEILING_MARGIN_RATIO) {
-                            contour.release()
-                            continue
-                        }
-
                         val rect = Imgproc.boundingRect(contour)
-                        val aspect = rect.width.toDouble() / max(1.0, rect.height.toDouble())
-                        val extent = area / (rect.width.toDouble() * rect.height.toDouble())
-
-                        // Filter 2: Compactness & Aspect Ratio (Rejects elongated ceiling tubes/diffuse panels)
-                        if (aspect in MIN_ASPECT_RATIO..MAX_ASPECT_RATIO && extent >= MIN_EXTENT) {
-                            detectedBlobs.add(LightBlob(cx, cy, area, rect))
-                            allBlobPoints.add(PointF(cx.toFloat(), cy.toFloat()))
-                        }
+                        detectedBlobs.add(LightBlob(cx, cy, area, rect))
+                        allBlobPoints.add(PointF(cx.toFloat(), cy.toFloat()))
                     }
                 }
                 contour.release()
@@ -248,7 +228,7 @@ class DriverTargetAnalyzer(
             // Step 6: Single-Axis Pan Target Triangulation & Photometric Classifier
             var isLocked = false
             var panAngle = SERVO_CENTER_DEG
-            val tiltAngle = SERVO_CENTER_DEG // Tilt is locked to level horizon (hardware tilt removed)
+            val tiltAngle = SERVO_CENTER_DEG
             var driverTargetPoint: PointF? = null
             var headlightLeftPoint: PointF? = null
             var headlightRightPoint: PointF? = null
@@ -305,10 +285,10 @@ class DriverTargetAnalyzer(
 
                     if (highBeamConfidence >= HIGH_BEAM_CONFIDENCE_CUTOFF) {
                         beamType = BeamType.HIGH_BEAM
-                        countermeasureActive = true // Turn ON retaliatory torch
+                        countermeasureActive = true
                     } else {
                         beamType = BeamType.LOW_BEAM
-                        countermeasureActive = false // Turn OFF retaliatory torch
+                        countermeasureActive = false
                     }
 
                     upperRoi.release()
@@ -324,7 +304,6 @@ class DriverTargetAnalyzer(
                 val centerX = frameWidth / 2.0
                 val normX = (xDriver - centerX) / centerX
 
-                // Single-axis Pan Angle calculation (rotates servo left or right toward driver)
                 val rawPan = (SERVO_CENTER_DEG - (normX * PAN_FOV_HALF_DEG)).coerceIn(0.0, 180.0)
 
                 smoothedPan = smoothedPan + emaAlpha * (rawPan - smoothedPan)
@@ -338,9 +317,9 @@ class DriverTargetAnalyzer(
                     panAngle, beamStr, torchState
                 )
             } else if (detectedBlobs.isNotEmpty()) {
-                // Single Concentrated Flashlight Target Lock
+                // Flashlight Single Spot Lock
                 val maxBlob = detectedBlobs.maxByOrNull { it.area }
-                if (maxBlob != null && maxBlob.area >= 30.0) {
+                if (maxBlob != null) {
                     isLocked = true
                     headlightLeftPoint = PointF(maxBlob.x.toFloat(), maxBlob.y.toFloat())
                     headlightRightPoint = PointF(maxBlob.x.toFloat(), maxBlob.y.toFloat())
@@ -349,9 +328,9 @@ class DriverTargetAnalyzer(
                     driverTargetPoint = PointF(maxBlob.x.toFloat(), maxBlob.y.toFloat())
 
                     glareLuxEstimate = (maxBlob.area * 2.8).coerceIn(150.0, 2500.0)
-                    highBeamConfidence = 0.92f
+                    highBeamConfidence = 0.95f
                     beamType = BeamType.HIGH_BEAM
-                    countermeasureActive = true // Turn ON retaliatory torch
+                    countermeasureActive = true
 
                     val centerX = frameWidth / 2.0
                     val normX = (maxBlob.x - centerX) / centerX
@@ -367,8 +346,8 @@ class DriverTargetAnalyzer(
                     )
                 }
             } else {
-                // Vehicle passed or target lost: reset pan servo to center (90°) and turn OFF torch
-                smoothedPan = smoothedPan + 0.1 * (SERVO_CENTER_DEG - smoothedPan)
+                // Target lost: return pan to center (90°)
+                smoothedPan = smoothedPan + 0.15 * (SERVO_CENTER_DEG - smoothedPan)
                 panAngle = smoothedPan.roundToInt()
                 countermeasureActive = false
                 beamType = BeamType.NONE
