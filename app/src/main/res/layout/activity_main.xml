@@ -66,6 +66,84 @@
             android:textSize="13sp" />
     </LinearLayout>
 
+    <!-- On-Screen Manual Teleop Pan Slider Overlay (shown in Teleop Mode) -->
+    <LinearLayout
+        android:id="@+id/manual_pan_container"
+        android:layout_width="320dp"
+        android:layout_height="wrap_content"
+        android:layout_gravity="center_horizontal|bottom"
+        android:layout_marginBottom="85dp"
+        android:background="@drawable/hud_panel_bg"
+        android:orientation="vertical"
+        android:padding="10dp"
+        android:gravity="center"
+        android:visibility="gone">
+
+        <TextView
+            android:id="@+id/manual_pan_title"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:fontFamily="monospace"
+            android:text="MANUAL SERVO PAN: 90°"
+            android:textColor="#00E676"
+            android:textSize="12sp"
+            android:textStyle="bold" />
+
+        <SeekBar
+            android:id="@+id/seekbar_manual_pan"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="6dp"
+            android:max="180"
+            android:progress="90" />
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="4dp"
+            android:gravity="center"
+            android:orientation="horizontal">
+
+            <Button
+                android:id="@+id/btn_pan_left"
+                style="@android:style/Widget.DeviceDefault.Button.Borderless"
+                android:layout_width="0dp"
+                android:layout_height="32dp"
+                android:layout_weight="1"
+                android:background="#2200E5FF"
+                android:fontFamily="monospace"
+                android:text="0° (LEFT)"
+                android:textColor="#00E5FF"
+                android:textSize="10sp" />
+
+            <Button
+                android:id="@+id/btn_pan_center"
+                style="@android:style/Widget.DeviceDefault.Button.Borderless"
+                android:layout_width="0dp"
+                android:layout_height="32dp"
+                android:layout_marginStart="4dp"
+                android:layout_weight="1"
+                android:background="#2200E5FF"
+                android:fontFamily="monospace"
+                android:text="90° (CTR)"
+                android:textColor="#00E5FF"
+                android:textSize="10sp" />
+
+            <Button
+                android:id="@+id/btn_pan_right"
+                style="@android:style/Widget.DeviceDefault.Button.Borderless"
+                android:layout_width="0dp"
+                android:layout_height="32dp"
+                android:layout_marginStart="4dp"
+                android:layout_weight="1"
+                android:background="#2200E5FF"
+                android:fontFamily="monospace"
+                android:text="180° (RIGHT)"
+                android:textColor="#00E5FF"
+                android:textSize="10sp" />
+        </LinearLayout>
+    </LinearLayout>
+
     <!-- Bottom Telemetry HUD Panels -->
     <LinearLayout
         android:layout_width="match_parent"
@@ -158,13 +236,13 @@
             android:background="@drawable/hud_panel_bg"
             android:orientation="vertical"
             android:padding="10dp"
-            android:minWidth="230dp">
+            android:minWidth="250dp">
 
             <TextView
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:fontFamily="monospace"
-                android:text="-- PHOTOMETRIC CLASSIFIER --"
+                android:text="-- CONTROLS &amp; CLASSIFIER --"
                 android:textColor="#00E5FF"
                 android:textSize="11sp"
                 android:textStyle="bold" />
@@ -211,6 +289,7 @@
                 android:textColor="#00E676"
                 android:textSize="12sp" />
 
+            <!-- Row 1: AE Clamp and Sim buttons -->
             <LinearLayout
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
@@ -221,29 +300,65 @@
                     android:id="@+id/btn_toggle_exposure"
                     style="@android:style/Widget.DeviceDefault.Button.Borderless"
                     android:layout_width="wrap_content"
-                    android:layout_height="36dp"
+                    android:layout_height="32dp"
                     android:background="#2200E5FF"
                     android:fontFamily="monospace"
-                    android:paddingStart="8dp"
-                    android:paddingEnd="8dp"
+                    android:paddingStart="6dp"
+                    android:paddingEnd="6dp"
                     android:text="AE CLAMP"
                     android:textColor="#00E5FF"
-                    android:textSize="11sp" />
+                    android:textSize="10sp" />
 
                 <Button
                     android:id="@+id/btn_simulate_target"
                     style="@android:style/Widget.DeviceDefault.Button.Borderless"
                     android:layout_width="wrap_content"
-                    android:layout_height="36dp"
-                    android:layout_marginStart="6dp"
+                    android:layout_height="32dp"
+                    android:layout_marginStart="4dp"
                     android:background="#2200E676"
                     android:fontFamily="monospace"
-                    android:paddingStart="8dp"
-                    android:paddingEnd="8dp"
-                    android:text="SIM HIGH BEAM"
+                    android:paddingStart="6dp"
+                    android:paddingEnd="6dp"
+                    android:text="SIM BEAM"
                     android:textColor="#00E676"
-                    android:textSize="11sp" />
+                    android:textSize="10sp" />
             </LinearLayout>
+
+            <!-- Row 2: Manual Teleop Mode & Manual Torch Toggle Buttons -->
+            <LinearLayout
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="4dp"
+                android:orientation="horizontal">
+
+                <Button
+                    android:id="@+id/btn_teleop_mode"
+                    style="@android:style/Widget.DeviceDefault.Button.Borderless"
+                    android:layout_width="wrap_content"
+                    android:layout_height="32dp"
+                    android:background="#2200E5FF"
+                    android:fontFamily="monospace"
+                    android:paddingStart="6dp"
+                    android:paddingEnd="6dp"
+                    android:text="TELEOP: OFF"
+                    android:textColor="#00E5FF"
+                    android:textSize="10sp" />
+
+                <Button
+                    android:id="@+id/btn_torch_toggle"
+                    style="@android:style/Widget.DeviceDefault.Button.Borderless"
+                    android:layout_width="wrap_content"
+                    android:layout_height="32dp"
+                    android:layout_marginStart="4dp"
+                    android:background="#22FF1744"
+                    android:fontFamily="monospace"
+                    android:paddingStart="6dp"
+                    android:paddingEnd="6dp"
+                    android:text="TORCH: OFF"
+                    android:textColor="#FF1744"
+                    android:textSize="10sp" />
+            </LinearLayout>
+
         </LinearLayout>
     </LinearLayout>
 

@@ -13,6 +13,7 @@ import android.view.View
 import android.view.WindowInsets
 import android.view.WindowInsetsController
 import android.view.WindowManager
+import android.widget.SeekBar
 import androidx.activity.ComponentActivity
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.annotation.OptIn
@@ -44,6 +45,7 @@ import kotlin.math.roundToInt
  * 4. DriverTargetAnalyzer integration with photometric high-beam classifier and HUD.
  * 5. ESP32 HelmetTracker Wireless REST API integration (http://192.168.4.1/set?angle=X&light=Y).
  * 6. Embedded Teleop WebServer (Port 8080) for Laptop Remote Control Demo Override.
+ * 7. On-Screen Touch Manual Teleop Controls (Pan Servo Slider & Torch Power ON/OFF Toggle).
  */
 class MainActivity : ComponentActivity(),
     DriverTargetAnalyzer.TargetVectorListener,
@@ -71,7 +73,7 @@ class MainActivity : ComponentActivity(),
     private var isExposureClamped = true
     private var simMode = SimMode.OFF
 
-    // Teleop Laptop Remote Control Override State
+    // On-Screen / Laptop Teleop Control Override State
     private var isTeleopOverride = false
     private var teleopPanAngle = 90
     private var teleopTorchOn = false
@@ -121,25 +123,16 @@ class MainActivity : ComponentActivity(),
                 esp32Client.dispatchTargetState(angle = teleopPanAngle, lightOn = teleopTorchOn)
 
                 runOnUiThread {
-                    val statusText = if (teleopTorchOn) "[⚡ TELEOP OVERRIDE: TORCH ON ⚡]" else "[⚡ TELEOP OVERRIDE ACTIVE ⚡]"
-                    binding.statusBadgeText.text = statusText
-                    binding.statusBadgeText.setTextColor(Color.parseColor("#FF1744"))
-                    binding.statusBadgeText.setBackgroundResource(R.drawable.hud_status_badge)
+                    binding.manualPanContainer.visibility = View.VISIBLE
+                    binding.btnTeleopMode.text = "TELEOP: ON"
+                    binding.btnTeleopMode.setBackgroundColor(Color.parseColor("#88FF1744"))
 
+                    binding.seekbarManualPan.progress = teleopPanAngle
+                    binding.manualPanTitle.text = "MANUAL SERVO PAN: $teleopPanAngle°"
                     binding.telemetryPanText.text = "SERVO PAN:  $teleopPanAngle°"
                     binding.exposureStatusText.text = "TELEOP: http://${teleopServer.getLocalIpAddress()}:8080"
 
-                    if (teleopTorchOn) {
-                        binding.telemetryTiltText.text = "TORCH: ON 🔥"
-                        binding.telemetryTiltText.setTextColor(Color.parseColor("#FF1744"))
-                        binding.countermeasureStatusText.text = "TORCH BEAM: ON 🔥"
-                        binding.countermeasureStatusText.setTextColor(Color.parseColor("#FF1744"))
-                    } else {
-                        binding.telemetryTiltText.text = "TORCH: OFF"
-                        binding.telemetryTiltText.setTextColor(Color.parseColor("#80D8FF"))
-                        binding.countermeasureStatusText.text = "TORCH BEAM: OFF"
-                        binding.countermeasureStatusText.setTextColor(Color.parseColor("#00E676"))
-                    }
+                    updateTorchUiState()
                 }
             }
         }
@@ -201,6 +194,97 @@ class MainActivity : ComponentActivity(),
                     binding.btnSimulateTarget.text = "SIM HIGH BEAM"
                     binding.btnSimulateTarget.setBackgroundColor(Color.parseColor("#2200E676"))
                 }
+            }
+        }
+
+        // On-Screen Manual Teleop Control Listeners
+        binding.btnTeleopMode.setOnClickListener {
+            isTeleopOverride = !isTeleopOverride
+
+            if (isTeleopOverride) {
+                binding.manualPanContainer.visibility = View.VISIBLE
+                binding.btnTeleopMode.text = "TELEOP: ON"
+                binding.btnTeleopMode.setBackgroundColor(Color.parseColor("#88FF1744"))
+                updateTorchUiState()
+
+                esp32Client.dispatchTargetState(angle = teleopPanAngle, lightOn = teleopTorchOn)
+            } else {
+                binding.manualPanContainer.visibility = View.GONE
+                binding.btnTeleopMode.text = "TELEOP: OFF"
+                binding.btnTeleopMode.setBackgroundColor(Color.parseColor("#2200E5FF"))
+                binding.statusBadgeText.text = "[SEARCHING ONCOMING BEAMS]"
+                binding.statusBadgeText.setTextColor(Color.parseColor("#FFB300"))
+                binding.statusBadgeText.setBackgroundResource(R.drawable.hud_status_badge)
+            }
+        }
+
+        binding.btnTorchToggle.setOnClickListener {
+            teleopTorchOn = !teleopTorchOn
+            updateTorchUiState()
+            esp32Client.dispatchTargetState(angle = teleopPanAngle, lightOn = teleopTorchOn)
+        }
+
+        binding.seekbarManualPan.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+            override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
+                if (fromUser) {
+                    teleopPanAngle = progress
+                    binding.manualPanTitle.text = "MANUAL SERVO PAN: $teleopPanAngle°"
+                    binding.telemetryPanText.text = "SERVO PAN:  $teleopPanAngle°"
+                    esp32Client.dispatchTargetState(angle = teleopPanAngle, lightOn = teleopTorchOn)
+                }
+            }
+
+            override fun onStartTrackingTouch(seekBar: SeekBar?) {}
+            override fun onStopTrackingTouch(seekBar: SeekBar?) {}
+        })
+
+        binding.btnPanLeft.setOnClickListener {
+            binding.seekbarManualPan.progress = 0
+            teleopPanAngle = 0
+            binding.manualPanTitle.text = "MANUAL SERVO PAN: 0°"
+            binding.telemetryPanText.text = "SERVO PAN:  0°"
+            esp32Client.dispatchTargetState(angle = teleopPanAngle, lightOn = teleopTorchOn)
+        }
+
+        binding.btnPanCenter.setOnClickListener {
+            binding.seekbarManualPan.progress = 90
+            teleopPanAngle = 90
+            binding.manualPanTitle.text = "MANUAL SERVO PAN: 90°"
+            binding.telemetryPanText.text = "SERVO PAN:  90°"
+            esp32Client.dispatchTargetState(angle = teleopPanAngle, lightOn = teleopTorchOn)
+        }
+
+        binding.btnPanRight.setOnClickListener {
+            binding.seekbarManualPan.progress = 180
+            teleopPanAngle = 180
+            binding.manualPanTitle.text = "MANUAL SERVO PAN: 180°"
+            binding.telemetryPanText.text = "SERVO PAN:  180°"
+            esp32Client.dispatchTargetState(angle = teleopPanAngle, lightOn = teleopTorchOn)
+        }
+    }
+
+    private fun updateTorchUiState() {
+        if (teleopTorchOn) {
+            binding.btnTorchToggle.text = "TORCH: ON 🔥"
+            binding.btnTorchToggle.setBackgroundColor(Color.parseColor("#88FF1744"))
+            binding.countermeasureStatusText.text = "TORCH BEAM: ON 🔥"
+            binding.countermeasureStatusText.setTextColor(Color.parseColor("#FF1744"))
+            binding.telemetryTiltText.text = "TORCH: ON 🔥"
+            binding.telemetryTiltText.setTextColor(Color.parseColor("#FF1744"))
+            if (isTeleopOverride) {
+                binding.statusBadgeText.text = "[⚡ TELEOP OVERRIDE: TORCH ON ⚡]"
+                binding.statusBadgeText.setTextColor(Color.parseColor("#FF1744"))
+            }
+        } else {
+            binding.btnTorchToggle.text = "TORCH: OFF"
+            binding.btnTorchToggle.setBackgroundColor(Color.parseColor("#22FF1744"))
+            binding.countermeasureStatusText.text = "TORCH BEAM: OFF"
+            binding.countermeasureStatusText.setTextColor(Color.parseColor("#00E676"))
+            binding.telemetryTiltText.text = "TORCH: OFF"
+            binding.telemetryTiltText.setTextColor(Color.parseColor("#80D8FF"))
+            if (isTeleopOverride) {
+                binding.statusBadgeText.text = "[⚡ TELEOP OVERRIDE ACTIVE ⚡]"
+                binding.statusBadgeText.setTextColor(Color.parseColor("#FF1744"))
             }
         }
     }
@@ -328,7 +412,7 @@ class MainActivity : ComponentActivity(),
      */
     override fun onTargetVectorUpdated(pan: Int, tilt: Int, locked: Boolean, countermeasureActive: Boolean) {
         if (isTeleopOverride) {
-            // Teleop Laptop Remote Control Override has absolute priority!
+            // Manual / Laptop Teleop Remote Control Override has absolute priority!
             esp32Client.dispatchTargetState(angle = teleopPanAngle, lightOn = teleopTorchOn)
             return
         }
