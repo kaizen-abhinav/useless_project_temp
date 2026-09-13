@@ -47,7 +47,7 @@ Instead of manually flashing lights, HBGCS mounts a smartphone running a zero-co
 
 ## 🏗️ System Architecture & Workflow Diagrams
 
-### 1. Computer Vision & Photometric Classification Pipeline
+### Computer Vision & Photometric Classification Pipeline
 ```
  ┌─────────────────────────────────────────────────────────────────────────────────────────────────────────┐
  │                                   CAMERAX 640x480 @ 60 FPS INGESTION                                    │
@@ -139,6 +139,16 @@ $$\theta_{\text{smoothed}} = \theta_{\text{prev}} + \alpha \cdot (\theta_{\text{
 
 ---
 
+## 📱 Application UI & Tactical HUD Documentation
+
+| HUD Screenshot | System State | Feature Breakdown |
+| :---: | :--- | :--- |
+| <img src="docs/ui_passive_searching.jpg" width="360" alt="HUD Passive Searching State" /> | **Passive Searching Mode** | Real-time CameraX preview with `-18 EV` exposure clamping enabled. Renders center boresight crosshairs ($+90^\circ$ Azimuth), pitch ladder ticks, bottom pan servo gauge ($90^\circ$ neutral), and status badge `[SEARCHING ONCOMING BEAMS]`. |
+| <img src="docs/ui_high_beam_strike.jpg" width="360" alt="HUD High Beam Retaliatory Strike" /> | **High Beam Retaliatory Strike Active** | High-beam glare classified ($94\%$ confidence, $1840\text{ Lux}$). HUD triggers flaring top warning banner, photometric red glare dispersion cones, and projects glowing red retaliatory photon beam vector directed at driver eye-box. Dispatches `light=1` to ESP32 to turn torch **ON** 🔥. |
+| <img src="docs/ui_kinematic_telemetry.jpg" width="360" alt="HUD Low Beam Passive Tracking" /> | **Low Beam Passive Tracking** | Symmetrical headlight pair baseline tracked ($180\text{ px}$ width, $22.5\text{m}$ distance). High beam confidence $< 60\%$. Status badge updates to `[LOW BEAM - PASSIVE TRACKING]` with torch **OFF**. Processing runs at **60 FPS** with **$4\text{ms}$ latency**. |
+
+---
+
 ## 📸 Build Photos & Hardware Setup
 
 | Photo | Component | Detailed Description |
@@ -146,6 +156,14 @@ $$\theta_{\text{smoothed}} = \theta_{\text{prev}} + \alpha \cdot (\theta_{\text{
 | <img src="docs/gimbal_assembly.jpg" width="360" alt="Motorized Gimbal Assembly" /> | **Pan Gimbal & Photon Torch Assembly** | Close-up view of the TowerPro SG90 9g micro servo motor mounted on a custom lightweight plate. The servo horn directly drives the horizontal pan azimuth platform, holding the high-lumen optical convex lens LED photon torch. |
 | <img src="docs/helmet_mount.jpg" width="360" alt="Full Helmet Build" /> | **Full Motorcycle Helmet Integration** | Complete GT MAX full-face motorcycle helmet with the top-mounted motorized photon strike turret. Wiring routes down the helmet shell to the power distribution unit and ESP32 controller mounted on the rear. |
 | <img src="docs/circuit_wiring.jpg" width="360" alt="ESP32 & Relay Circuitry" /> | **ESP32 Controller & Relay Circuitry** | Hardware benchtop setup featuring the ESP32 Tensilica dual-core microcontroller development board (red LED indicator active), 1-channel optocoupled relay module (green/red status LEDs active), instant bonding adhesive, and $5\text{V}$ power distribution jumper wiring. |
+
+---
+
+## 🎥 Project Demo Video
+
+Watch the complete autonomous High Beam Glare Countermeasure System (HBGCS v2.4) in action, demonstrating real-time OpenCV headlight detection, driver eye-box triangulation, pan-servo aiming, and automatic retaliatory photon torch execution:
+
+▶️ **[Watch the High Beam Countermeasure System Demo Video](https://drive.google.com/file/d/1zYCttWQGgaiIfYYePrprCguUc2NPMQUS/view?usp=sharing)**
 
 ---
 
