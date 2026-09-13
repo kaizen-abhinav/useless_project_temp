@@ -24,6 +24,7 @@ For Software:
 - Kotlin
 - Jetpack Compose / CameraX (Camera2 Interop -18 EV Exposure Clamping)
 - OpenCV 4.9.0 (Zero-copy Y-luminance image processing)
+- Embedded Teleop HTTP WebServer (Port 8080) for Laptop Remote Override
 - Custom Kinematics & Photometric Analysis Engine
 - Exponential Moving Average (EMA) Servo Filters
 
@@ -31,7 +32,7 @@ For Hardware:
 - Android Smartphone (Camera & HUD Display)
 - Helmet Chin / Top Mount Assembly
 - ESP32 Microcontroller (Pan/Tilt Servo & High-Intensity Torch Driver)
-- 2x Micro Servos (Pan & Tilt Gimbal)
+- Micro Servo (Horizontal Pan Gimbal)
 - High-Lumen LED Photon Torch
 
 ### Implementation
@@ -44,15 +45,17 @@ For Software:
 2. Open the project in Android Studio.
 3. Allow Gradle to sync dependencies and build the application.
 
-# Run
+# Run & Teleop Presentation Mode
 1. Connect an Android device with USB debugging enabled.
 2. Build and install using Android Studio or Gradle:
    ```bash
    ./gradlew app:assembleDebug
    ```
 3. Grant camera permissions on the device.
-4. Tap **AE CLAMP** to lock exposure compensation (-18 EV) and isolate bright headlight cores.
-5. Tap **SIM HIGH BEAM** to test simulated oncoming high-beam vehicle retaliatory strike targeting.
+4. **Laptop Teleop Remote Control Mode:**
+   * Connect your laptop to the same Wi-Fi network as the phone (or the ESP32 `HelmetTracker` AP).
+   * Open `http://<PHONE_IP>:8080` in Chrome/Firefox.
+   * Move the Pan Azimuth slider ($0^\circ \dots 180^\circ$) or toggle **FIRE TORCH (ON)** to take manual remote control override during live hackathon demos!
 
 ### Project Documentation
 For Software:
@@ -76,21 +79,22 @@ For Software:
  ┌─────────────────────────────────────────────────────┴────────────────────────────────────────────────────┐
  │  3. Kinematic RHD Driver Eye-Box Triangulation:                                                          │
  │      • Y_driver = M_y - 0.85·W_baseline  |  X_driver = M_x - 0.25·W_baseline                             │
- │      • Exponential Moving Average (EMA) Servo Smoothing: Pan(θ), Tilt(φ)                                 │
+ │      • Exponential Moving Average (EMA) Servo Smoothing: Pan(θ)                                          │
  │  4. Retaliatory Photon Countermeasure Trigger:                                                           │
  │      • IF High Beam (Confidence ≥ 60%): Fires glowing helmet torch beam vector at driver's eyes          │
  │      • IF Low Beam: Passive tracking mode                                                                │
- │  5. ESP32 Serial Protocol Dispatch: $HBGCS,PAN:097,TILT:052,LUX:1840,BEAM:HIGH,STRIKE:ACTIVE*3F          │
+ │  5. Laptop Teleop Web Dashboard Override (Port 8080): Overrides Pan & Torch via HTTP REST                 │
+ │  6. ESP32 REST Protocol Dispatch: http://192.168.4.1/set?angle=X&light=Y                                 │
  └──────────────────────────────────────────────────────────────────────────────────────────────────────────┘
 ```
 
-# NMEA Telemetry Stream
+# ESP32 REST Payload
 ```text
-$HBGCS,PAN:097,TILT:052,LUX:1840,BEAM:HIGH,STRIKE:ACTIVE*3F
+http://192.168.4.1/set?angle=97&light=1
 ```
 
 ## Team Contributions
-- **Abhinav:** Concept, OpenCV computer vision pipeline, Camera2 exposure clamping, photometric high-beam classifier, driver eye-box kinematics, tactical HUD overlay, and ESP32 telemetry protocol.
+- **Abhinav:** Concept, OpenCV computer vision pipeline, Camera2 exposure clamping, photometric high-beam classifier, driver eye-box kinematics, tactical HUD overlay, embedded Teleop WebServer, and ESP32 REST protocol client.
 - **Reuben Skariah:** Hardware architecture, helmet chin/top mount assembly, ESP32 pan/tilt servo gimbal wiring, power distribution, and high-lumen photon torch driver integration.
 
 ---

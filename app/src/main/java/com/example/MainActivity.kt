@@ -43,6 +43,7 @@ import kotlin.math.roundToInt
  * 3. Camera2 interop exposure clamping to minimum (-4 EV or lower) to isolate high-beam filaments.
  * 4. DriverTargetAnalyzer integration with photometric high-beam classifier and HUD.
  * 5. ESP32 HelmetTracker Wireless REST API integration (http://192.168.4.1/set?angle=X&light=Y).
+ * 6. Embedded Teleop WebServer (Port 8080) for Laptop Remote Control Demo Override.
  */
 class MainActivity : ComponentActivity(),
     DriverTargetAnalyzer.TargetVectorListener,
@@ -64,10 +65,16 @@ class MainActivity : ComponentActivity(),
     private lateinit var binding: ActivityMainBinding
     private lateinit var cameraExecutor: ExecutorService
     private lateinit var esp32Client: Esp32Client
+    private lateinit var teleopServer: TeleopServer
 
     private var camera: Camera? = null
     private var isExposureClamped = true
     private var simMode = SimMode.OFF
+
+    // Teleop Laptop Remote Control Override State
+    private var isTeleopOverride = false
+    private var teleopPanAngle = 90
+    private var teleopTorchOn = false
 
     private val cameraPermissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestPermission()
@@ -97,9 +104,46 @@ class MainActivity : ComponentActivity(),
         // Initialize ESP32 Wireless REST Hardware Controller
         esp32Client = Esp32Client(this) { _, statusText ->
             runOnUiThread {
-                binding.exposureStatusText.text = statusText
+                if (!isTeleopOverride) {
+                    binding.exposureStatusText.text = statusText
+                }
             }
         }
+
+        // Initialize & Start Embedded Teleop WebServer on Port 8080
+        teleopServer = TeleopServer(this) { angle, lightOn, overrideActive ->
+            isTeleopOverride = overrideActive
+            teleopPanAngle = angle
+            teleopTorchOn = lightOn
+
+            if (overrideActive) {
+                // Instantly dispatch laptop remote control commands to ESP32!
+                esp32Client.dispatchTargetState(angle = teleopPanAngle, lightOn = teleopTorchOn)
+
+                runOnUiThread {
+                    val statusText = if (teleopTorchOn) "[⚡ TELEOP OVERRIDE: TORCH ON ⚡]" else "[⚡ TELEOP OVERRIDE ACTIVE ⚡]"
+                    binding.statusBadgeText.text = statusText
+                    binding.statusBadgeText.setTextColor(Color.parseColor("#FF1744"))
+                    binding.statusBadgeText.setBackgroundResource(R.drawable.hud_status_badge)
+
+                    binding.telemetryPanText.text = "SERVO PAN:  $teleopPanAngle°"
+                    binding.exposureStatusText.text = "TELEOP: http://${teleopServer.getLocalIpAddress()}:8080"
+
+                    if (teleopTorchOn) {
+                        binding.telemetryTiltText.text = "TORCH: ON 🔥"
+                        binding.telemetryTiltText.setTextColor(Color.parseColor("#FF1744"))
+                        binding.countermeasureStatusText.text = "TORCH BEAM: ON 🔥"
+                        binding.countermeasureStatusText.setTextColor(Color.parseColor("#FF1744"))
+                    } else {
+                        binding.telemetryTiltText.text = "TORCH: OFF"
+                        binding.telemetryTiltText.setTextColor(Color.parseColor("#80D8FF"))
+                        binding.countermeasureStatusText.text = "TORCH BEAM: OFF"
+                        binding.countermeasureStatusText.setTextColor(Color.parseColor("#00E676"))
+                    }
+                }
+            }
+        }
+        teleopServer.start()
 
         cameraExecutor = Executors.newSingleThreadExecutor()
 
@@ -261,14 +305,16 @@ class MainActivity : ComponentActivity(),
             camera2Control.setCaptureRequestOptions(captureRequestOptions)
 
             runOnUiThread {
-                if (isExposureClamped) {
-                    binding.exposureStatusText.text = "AE CLAMP: ${targetEv} EV [ON]"
-                    binding.exposureStatusText.setTextColor(Color.parseColor("#00E676"))
-                    binding.btnToggleExposure.text = "CLAMP: ON"
-                } else {
-                    binding.exposureStatusText.text = "AE CLAMP: 0 EV [OFF]"
-                    binding.exposureStatusText.setTextColor(Color.parseColor("#FF5252"))
-                    binding.btnToggleExposure.text = "CLAMP: OFF"
+                if (!isTeleopOverride) {
+                    if (isExposureClamped) {
+                        binding.exposureStatusText.text = "AE CLAMP: ${targetEv} EV [ON]"
+                        binding.exposureStatusText.setTextColor(Color.parseColor("#00E676"))
+                        binding.btnToggleExposure.text = "CLAMP: ON"
+                    } else {
+                        binding.exposureStatusText.text = "AE CLAMP: 0 EV [OFF]"
+                        binding.exposureStatusText.setTextColor(Color.parseColor("#FF5252"))
+                        binding.btnToggleExposure.text = "CLAMP: OFF"
+                    }
                 }
             }
             Log.d(TAG, "Applied exposure compensation: $targetEv EV")
@@ -281,12 +327,18 @@ class MainActivity : ComponentActivity(),
      * Real-time kinematic target vector dispatch interface for ESP32 HelmetTracker REST API.
      */
     override fun onTargetVectorUpdated(pan: Int, tilt: Int, locked: Boolean, countermeasureActive: Boolean) {
+        if (isTeleopOverride) {
+            // Teleop Laptop Remote Control Override has absolute priority!
+            esp32Client.dispatchTargetState(angle = teleopPanAngle, lightOn = teleopTorchOn)
+            return
+        }
+
         if (locked) {
             val torchStr = if (countermeasureActive) "TORCH: ON" else "TORCH: OFF"
             Log.d(TAG, "TARGET VECTOR -> Pan: $pan° [$torchStr]")
         }
 
-        // Dispatch real-time REST request to ESP32 HelmetTracker SoftAP (192.168.4.1/set?angle=X&light=Y)
+        // Automatic CV tracking dispatch
         val targetAngle = if (locked) pan else 90
         esp32Client.dispatchTargetState(angle = targetAngle, lightOn = countermeasureActive)
     }
@@ -295,7 +347,7 @@ class MainActivity : ComponentActivity(),
      * Real-time HUD telemetry callback.
      */
     override fun onTelemetryUpdated(telemetry: DriverTargetAnalyzer.TelemetryData) {
-        if (simMode != SimMode.OFF) return // Don't override active simulation feed
+        if (simMode != SimMode.OFF || isTeleopOverride) return // Don't override active teleop / simulation feed
 
         runOnUiThread {
             // Update graphical overlay
@@ -481,6 +533,7 @@ class MainActivity : ComponentActivity(),
 
     override fun onDestroy() {
         super.onDestroy()
+        teleopServer.stop()
         cameraExecutor.shutdown()
     }
 }
