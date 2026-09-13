@@ -8,6 +8,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import okhttp3.Call
 import okhttp3.Callback
+import okhttp3.ConnectionPool
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.Response
@@ -16,14 +17,14 @@ import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 
 /**
- * High-Speed Non-Blocking Asynchronous REST Client for ESP32 'HelmetTracker' SoftAP.
+ * Ultra-Fast Asynchronous REST Client for ESP32 'HelmetTracker' SoftAP.
  *
  * Implements Layer 3 REST Protocol Specification:
  * - Target Endpoint: http://192.168.4.1/set?angle=X&light=Y
- * - Query Parameters:
- *     - angle: [0-180] Clamped Pan Servo Angle
- *     - light: [0|1] (1 = High Beam Torch ON, 0 = Torch OFF)
- * - 40ms Debounce Rate Limiter & Non-blocking execution lock (isBusy) to prevent HTTP socket starvation.
+ * - Active-LOW Relay Switching Logic:
+ *     - lightOn == true  => light = 0 (Energizes active-LOW optocoupled relay -> Torch ON 🔥)
+ *     - lightOn == false => light = 1 (De-energizes active-LOW optocoupled relay -> Torch OFF)
+ * - 15ms Low-Latency Debounce & HTTP Connection Pooling for instant 60 FPS servo tracking.
  */
 class Esp32Client(
     private val hostIp: String = "192.168.4.1",
@@ -33,13 +34,14 @@ class Esp32Client(
 
     companion object {
         private const val TAG = "Esp32Client"
-        private const val DEBOUNCE_MS = 40L
+        private const val DEBOUNCE_MS = 15L // 15ms ultra-low latency for 60 FPS tracking
     }
 
     private val client = OkHttpClient.Builder()
-        .connectTimeout(1200, TimeUnit.MILLISECONDS)
-        .readTimeout(1200, TimeUnit.MILLISECONDS)
-        .writeTimeout(1200, TimeUnit.MILLISECONDS)
+        .connectionPool(ConnectionPool(5, 5, TimeUnit.MINUTES)) // HTTP Keep-Alive socket reuse
+        .connectTimeout(400, TimeUnit.MILLISECONDS)
+        .readTimeout(400, TimeUnit.MILLISECONDS)
+        .writeTimeout(400, TimeUnit.MILLISECONDS)
         .build()
 
     private val scope = CoroutineScope(Dispatchers.IO + Job())
@@ -50,11 +52,14 @@ class Esp32Client(
     private var lastDispatchedLight = -1
 
     /**
-     * Dispatches angle [0-180] and light state (1 = ON, 0 = OFF) to ESP32 /set REST endpoint.
+     * Dispatches angle [0-180] and active-LOW light state (0 = ON, 1 = OFF) to ESP32 /set REST endpoint.
      */
     fun dispatchTargetState(angle: Int, lightOn: Boolean) {
         val clampedAngle = angle.coerceIn(0, 180)
-        val lightVal = if (lightOn) 1 else 0
+
+        // Inverted Active-LOW Relay Control Logic:
+        // Active-LOW Optocoupler Relay: 0 = Torch ON, 1 = Torch OFF
+        val lightVal = if (lightOn) 0 else 1
 
         // Skip duplicate state dispatches
         if (clampedAngle == lastDispatchedAngle && lightVal == lastDispatchedLight) return

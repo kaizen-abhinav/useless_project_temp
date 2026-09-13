@@ -118,7 +118,7 @@ class DriverTargetAnalyzer(
 
     // Exponential Moving Average (EMA) smoothing for single-axis pan servo stability
     private var smoothedPan = SERVO_CENTER_DEG.toDouble()
-    private val emaAlpha = 0.30
+    private val emaAlpha = 0.65 // Ultra-fast 60 FPS responsive tracking
 
     // FPS tracking
     private var frameCount = 0
