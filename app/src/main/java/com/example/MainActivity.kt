@@ -95,7 +95,7 @@ class MainActivity : ComponentActivity(),
         initializeOpenCV()
 
         // Initialize ESP32 Wireless REST Hardware Controller
-        esp32Client = Esp32Client { _, statusText ->
+        esp32Client = Esp32Client(this) { _, statusText ->
             runOnUiThread {
                 binding.exposureStatusText.text = statusText
             }
